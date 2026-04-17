@@ -1,0 +1,7 @@
+requests
+pandas
+python-dotenv
+snowflake-connector-python[pandas]
+dbt-snowflake
+jupyterlab
+pyarrow
