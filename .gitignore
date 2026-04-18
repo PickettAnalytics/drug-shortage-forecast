@@ -5,3 +5,13 @@ __pycache__/
 *.pyc
 .ipynb_checkpoints/
 .DS_Store
+
+# DuckDB database files - regenerable from ingestion scripts
+*.duckdb
+*.duckdb.wal
+
+# dbt artifacts
+dbt/logs/
+dbt/drug_shortage_dbt/target/
+dbt/drug_shortage_dbt/dbt_packages/
+dbt/drug_shortage_dbt/logs/

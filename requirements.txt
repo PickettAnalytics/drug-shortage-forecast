@@ -1,7 +1,7 @@
 requests
 pandas
 python-dotenv
-snowflake-connector-python[pandas]
-dbt-snowflake
+duckdb
+dbt-duckdb
 jupyterlab
 pyarrow

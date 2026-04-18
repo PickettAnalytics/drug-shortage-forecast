@@ -1,0 +1,12 @@
+version: 2
+
+sources:
+  - name: raw
+    description: "Raw tables loaded from source systems via Python ingestion"
+    database: drug_shortages
+    schema: raw
+    tables:
+      - name: hc_shortages_raw
+        description: "Health Canada drug shortage reports, annual CSV exports, 2016-2026"
+      - name: hc_discontinuations_raw
+        description: "Health Canada drug discontinuation reports, annual CSV exports, 2016-2026"

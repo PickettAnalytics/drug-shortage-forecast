@@ -1,0 +1,105 @@
+version: 2
+
+models:
+  - name: stg_hc_shortages
+    description: >
+      Cleaned Health Canada drug shortage reports. One row per report.
+      DIN is zero-padded to 8 characters. Dates are safely cast with TRY_CAST.
+      Filtered to reports on/after 2017-03-14 (the mandatory reporting era),
+      plus anticipated reports with no actual start date yet.
+    columns:
+      - name: report_id
+        description: "Primary key. Unique identifier for each shortage report."
+        data_tests:
+          - unique
+          - not_null
+
+      - name: din
+        description: >
+          Drug Identification Number, zero-padded to 8 characters.
+          NULL for radiopharmaceuticals (Schedule C) which don't receive DINs.
+        data_tests:
+          - not_null:
+              config:
+                where: "has_din = true"
+
+      - name: has_din
+        description: >
+          TRUE if the report has a valid DIN. FALSE for radiopharmaceuticals
+          and other Schedule C products that don't receive DINs under Canadian
+          regulations.
+        data_tests:
+          - not_null
+
+      - name: brand_name
+        description: "Drug brand name as submitted by the manufacturer."
+        data_tests:
+          - not_null
+
+      - name: company_name
+        description: "Manufacturer or market authorization holder."
+        data_tests:
+          - not_null
+
+      - name: shortage_status
+        description: "Current status of the shortage."
+        data_tests:
+          - not_null
+          - accepted_values:
+              arguments:
+                values:
+                  - 'Resolved'
+                  - 'Actual shortage'
+                  - 'Avoided shortage'
+                  - 'Anticipated shortage'
+
+      - name: is_tier_3
+        description: "TRUE for Tier 3 shortages (highest clinical impact)."
+        data_tests:
+          - not_null
+
+  - name: stg_hc_discontinuations
+    description: >
+      Cleaned Health Canada drug discontinuation reports. One row per report.
+      Similar structure to shortages but with discontinuation-specific fields.
+    columns:
+      - name: report_id
+        description: "Primary key. Unique identifier for each discontinuation report."
+        data_tests:
+          - unique
+          - not_null
+
+      - name: din
+        description: >
+          Drug Identification Number, zero-padded to 8 characters.
+          NULL for radiopharmaceuticals (Schedule C) which don't receive DINs.
+        data_tests:
+          - not_null:
+              config:
+                where: "has_din = true"
+
+      - name: has_din
+        description: >
+          TRUE if the report has a valid DIN.
+        data_tests:
+          - not_null
+
+      - name: brand_name
+        description: "Drug brand name as submitted by the manufacturer."
+        data_tests:
+          - not_null
+
+      - name: company_name
+        description: "Manufacturer or market authorization holder."
+        data_tests:
+          - not_null
+
+      - name: discontinuation_status
+        description: "Current status of the discontinuation."
+        data_tests:
+          - not_null
+
+      - name: is_tier_3
+        description: "TRUE for Tier 3 discontinuations."
+        data_tests:
+          - not_null
