@@ -11,7 +11,6 @@ __pycache__/
 *.duckdb.wal
 
 # dbt artifacts
-dbt/logs/
-dbt/drug_shortage_dbt/target/
-dbt/drug_shortage_dbt/dbt_packages/
-dbt/drug_shortage_dbt/logs/
+**/logs/
+dbt/**/target/
+dbt/**/dbt_packages/

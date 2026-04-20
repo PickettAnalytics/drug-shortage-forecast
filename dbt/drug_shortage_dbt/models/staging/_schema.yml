@@ -130,6 +130,7 @@ models:
           - accepted_values:
               arguments:
                 values: ['marketed', 'cancelled', 'approved', 'dormant']
+ 
   - name: stg_dpd_comp
     description: "Cleaned DPD companies. One row per drug_code (single company per drug)."
     columns:
@@ -210,6 +211,12 @@ models:
       - name: status
         data_tests:
           - not_null
+      - name: history_date
+        description: "Date the status took effect. Required for current records."
+        data_tests:
+          - not_null:
+              config:
+                where: "is_current_status = true"
 
   - name: stg_dpd_schedule
     description: "Cleaned prescription schedule classifications."

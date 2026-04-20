@@ -1,0 +1,39 @@
+version: 2
+
+models:
+  - name: dim_drug
+    description: >
+      One row per drug_code, denormalized from the 8 DPD staging tables.
+      Primary dimension for drug-level feature engineering.
+      Includes all product status categories (marketed, cancelled, approved, dormant).
+    columns:
+      - name: drug_code
+        description: "Primary key. Internal Health Canada drug identifier."
+        data_tests:
+          - unique
+          - not_null
+
+      - name: din
+        description: >
+          Drug Identification Number. 1:1 with drug_code in DPD.
+          NULL for Schedule C drugs (rare).
+        data_tests:
+          - not_null
+
+      - name: brand_name
+        description: "Drug brand name."
+        data_tests:
+          - not_null
+
+      - name: product_status_extract
+        description: "Which DPD extract this drug came from."
+        data_tests:
+          - not_null
+          - accepted_values:
+              arguments:
+                values: ['marketed', 'cancelled', 'approved', 'dormant']
+
+      - name: company_name
+        description: "Manufacturer / authorization holder."
+        data_tests:
+          - not_null
