@@ -13,4 +13,6 @@ __pycache__/
 # dbt artifacts
 **/logs/
 dbt/**/target/
-dbt/**/dbt_packages/
+**/dbt_packages/
+**/packages.yml
+**/package-lock.yml

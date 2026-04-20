@@ -16,7 +16,15 @@ models:
       - name: din
         description: >
           Drug Identification Number. 1:1 with drug_code in DPD.
-          NULL for Schedule C drugs (rare).
+          NULL for Schedule C drugs (radiopharmaceuticals).
+        data_tests:
+          - not_null:
+              config:
+                where: "has_din = true"
+
+      - name: has_din
+        description: >
+          TRUE if this drug has a proper DIN. FALSE for Schedule C drugs.
         data_tests:
           - not_null
 
@@ -37,3 +45,51 @@ models:
         description: "Manufacturer / authorization holder."
         data_tests:
           - not_null
+      
+  - name: fct_shortage_episode
+    description: >
+      One row per shortage report event, joined to drug metadata via dim_drug.
+      The canonical analytical shortage record. Keyed on report_id.
+    columns:
+      - name: report_id
+        description: "Primary key. From the original shortage report."
+        data_tests:
+          - unique
+          - not_null
+
+      - name: din
+        description: >
+          Drug Identification Number. NULL for Schedule C drugs
+          (radiopharmaceuticals).
+        data_tests:
+          - not_null:
+              config:
+                where: "has_din = true"
+
+      - name: shortage_status
+        description: "Current status of the shortage."
+        data_tests:
+          - not_null
+          - accepted_values:
+              arguments:
+                values:
+                  - 'Resolved'
+                  - 'Actual shortage'
+                  - 'Avoided shortage'
+                  - 'Anticipated shortage'
+
+      - name: matched_to_dpd
+        description: "TRUE if this shortage joined successfully to dim_drug."
+        data_tests:
+          - not_null
+
+      - name: actual_duration_days
+        description: >
+          Length of shortage in days. NULL for active or anticipated shortages
+          without an end date. Should be non-negative when populated.
+        data_tests:
+          - dbt_utils.accepted_range:
+              arguments:
+                min_value: 0
+              config:
+                where: "actual_duration_days is not null"

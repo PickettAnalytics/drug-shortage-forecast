@@ -116,7 +116,17 @@ models:
           - unique
           - not_null
       - name: din
-        description: "Drug Identification Number, 8 characters."
+        description: >
+          Drug Identification Number, 8 characters.
+          NULL for Schedule C drugs (radiopharmaceuticals) that don't receive DINs.
+        data_tests:
+          - not_null:
+              config:
+                where: "has_din = true"
+      - name: has_din
+        description: >
+          TRUE if the drug has a proper DIN. FALSE for Schedule C drugs
+          (radiopharmaceuticals, etc.) that use the "Not Applicable" placeholder.
         data_tests:
           - not_null
       - name: brand_name

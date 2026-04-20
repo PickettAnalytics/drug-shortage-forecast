@@ -11,6 +11,7 @@ WITH drug_base AS (
     SELECT 
         drug_code,
         din,
+        has_din,
         brand_name,
         descriptor,
         is_pediatric,
@@ -112,6 +113,7 @@ final AS (
         -- Keys
         d.drug_code,
         d.din,
+        d.has_din,
 
         -- Names & descriptors
         d.brand_name,
