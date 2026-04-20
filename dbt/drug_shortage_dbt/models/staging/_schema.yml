@@ -103,3 +103,121 @@ models:
         description: "TRUE for Tier 3 discontinuations."
         data_tests:
           - not_null
+
+  - name: stg_dpd_drug
+    description: >
+      Cleaned DPD master drug list. One row per drug_code.
+      Includes drugs across all four status categories (marketed, cancelled, 
+      approved, dormant). Use product_status_extract to filter.
+    columns:
+      - name: drug_code
+        description: "Internal Health Canada identifier. Primary key."
+        data_tests:
+          - unique
+          - not_null
+      - name: din
+        description: "Drug Identification Number, 8 characters."
+        data_tests:
+          - not_null
+      - name: brand_name
+        description: "Brand name as filed with Health Canada."
+        data_tests:
+          - not_null
+      - name: product_status_extract
+        description: "Which DPD extract this row came from."
+        data_tests:
+          - not_null
+          - accepted_values:
+              arguments:
+                values: ['marketed', 'cancelled', 'approved', 'dormant']
+  - name: stg_dpd_comp
+    description: "Cleaned DPD companies. One row per drug_code (single company per drug)."
+    columns:
+      - name: drug_code
+        description: "Foreign key to stg_dpd_drug."
+        data_tests:
+          - unique
+          - not_null
+          - relationships:
+              arguments:
+                to: ref('stg_dpd_drug')
+                field: drug_code
+      - name: company_name
+        data_tests:
+          - not_null
+
+  - name: stg_dpd_ingred
+    description: >
+      Cleaned active ingredients. Multiple rows per drug for combination products.
+    columns:
+      - name: drug_code
+        description: "Foreign key to stg_dpd_drug."
+        data_tests:
+          - not_null
+          - relationships:
+              arguments:
+                to: ref('stg_dpd_drug')
+                field: drug_code
+      - name: ingredient
+        data_tests:
+          - not_null
+
+  - name: stg_dpd_form
+    description: "Cleaned pharmaceutical forms. May have multiple rows per drug."
+    columns:
+      - name: drug_code
+        data_tests:
+          - not_null
+          - relationships:
+              arguments:
+                to: ref('stg_dpd_drug')
+                field: drug_code
+
+  - name: stg_dpd_route
+    description: "Cleaned routes of administration. May have multiple rows per drug."
+    columns:
+      - name: drug_code
+        data_tests:
+          - not_null
+          - relationships:
+              arguments:
+                to: ref('stg_dpd_drug')
+                field: drug_code
+
+  - name: stg_dpd_ther
+    description: "Cleaned therapeutic classifications (ATC and AHFS systems)."
+    columns:
+      - name: drug_code
+        data_tests:
+          - not_null
+          - relationships:
+              arguments:
+                to: ref('stg_dpd_drug')
+                field: drug_code
+
+  - name: stg_dpd_status
+    description: >
+      Cleaned status history. Multiple rows per drug across time. 
+      Use is_current_status to find the latest record.
+    columns:
+      - name: drug_code
+        data_tests:
+          - not_null
+          - relationships:
+              arguments:
+                to: ref('stg_dpd_drug')
+                field: drug_code
+      - name: status
+        data_tests:
+          - not_null
+
+  - name: stg_dpd_schedule
+    description: "Cleaned prescription schedule classifications."
+    columns:
+      - name: drug_code
+        data_tests:
+          - not_null
+          - relationships:
+              arguments:
+                to: ref('stg_dpd_drug')
+                field: drug_code

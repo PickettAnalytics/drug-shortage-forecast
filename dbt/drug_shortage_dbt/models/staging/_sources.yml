@@ -6,7 +6,26 @@ sources:
     database: drug_shortages
     schema: raw
     tables:
+      # Health Canada Shortages
       - name: hc_shortages_raw
         description: "Health Canada drug shortage reports, annual CSV exports, 2016-2026"
       - name: hc_discontinuations_raw
         description: "Health Canada drug discontinuation reports, annual CSV exports, 2016-2026"
+
+      # Drug Product Database (all 4 status categories: marketed, cancelled, approved, dormant)
+      - name: dpd_drug_raw
+        description: "DPD master drug list, one row per drug_code"
+      - name: dpd_comp_raw
+        description: "DPD company information, joined to drug via drug_code"
+      - name: dpd_ingred_raw
+        description: "DPD active ingredients, multiple rows per drug for combination products"
+      - name: dpd_form_raw
+        description: "DPD pharmaceutical forms (tablet, injection, etc.)"
+      - name: dpd_route_raw
+        description: "DPD routes of administration"
+      - name: dpd_ther_raw
+        description: "DPD therapeutic classifications (ATC and AHFS)"
+      - name: dpd_status_raw
+        description: "DPD marketing status history, multiple rows per drug across time"
+      - name: dpd_schedule_raw
+        description: "DPD prescription schedules"
