@@ -93,3 +93,94 @@ models:
                 min_value: 0
               config:
                 where: "actual_duration_days is not null"
+  
+  - name: int_drug_month_spine
+    description: >
+      One row per (DIN, observation_date) at month-start granularity.
+      Observation universe: drugs with valid DINs that were on-market at the
+      observation date. Date range: 2018-01-01 through 2025-09-01, monthly.
+      Contains the label for shortage prediction.
+    columns:
+      - name: observation_date
+        description: "First of the month. All features should reflect state as of this date."
+        data_tests:
+          - not_null
+
+      - name: din
+        description: "Drug Identification Number. Not null by construction."
+        data_tests:
+          - not_null
+
+      - name: shortage_started_within_90d
+        description: >
+          Binary label. 1 if a new shortage started in (observation_date, 
+          observation_date + 90 days] AND there wasn't an ongoing shortage 
+          on observation_date. 0 otherwise.
+        data_tests:
+          - not_null
+          - accepted_values:
+              arguments:
+                values: [0, 1]
+
+      - name: was_in_shortage_on_obs_date
+        description: "1 if the drug was currently in an ongoing shortage on obs_date."
+        data_tests:
+          - not_null
+          - accepted_values:
+              arguments:
+                values: [0, 1]
+
+  - name: int_shortage_features
+    description: >
+      Feature set for the shortage prediction panel. One row per
+      (din, observation_date) matching int_drug_month_spine.
+    tests:
+      - dbt_utils.unique_combination_of_columns:
+          arguments:
+            combination_of_columns:
+              - observation_date
+              - din
+    columns:
+      - name: observation_date
+        data_tests:
+          - not_null
+      - name: din
+        data_tests:
+          - not_null
+      - name: drug_age_years
+        description: "Years since first_marketed_date. NULL if never marketed (rare)."
+      - name: shortages_prior_12m
+        description: "Count of shortage report starts in prior 12 months."
+        data_tests:
+          - not_null
+          - dbt_utils.accepted_range:
+              arguments:
+                min_value: 0
+      - name: mfr_portfolio_size
+        data_tests:
+          - not_null
+          - dbt_utils.accepted_range:
+              arguments:
+                min_value: 0
+      - name: competing_drugs_same_ai_group
+        data_tests:
+          - not_null
+          - dbt_utils.accepted_range:
+              arguments:
+                min_value: 0
+
+  - name: dim_drug_by_din
+    description: >
+      DIN-level drug dimension. Guaranteed one row per DIN. Use this 
+      (instead of dim_drug) for any downstream join keyed on DIN, to 
+      avoid row multiplication when a DIN has multiple drug_codes.
+    columns:
+      - name: din
+        description: "Drug Identification Number. Primary key."
+        data_tests:
+          - unique
+          - not_null
+      - name: drug_code
+        description: "Picked deterministically per DIN preference order."
+        data_tests:
+          - not_null

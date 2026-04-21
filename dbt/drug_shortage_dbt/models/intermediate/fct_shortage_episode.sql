@@ -3,21 +3,7 @@ WITH shortages AS (
 ),
 
 drug_dim AS (
-    -- Dedupe the rare DIN that appears under multiple drug_codes:
-    -- prefer marketed > dormant > cancelled > approved, then lowest drug_code.
-    SELECT *
-    FROM {{ ref('dim_drug') }}
-    QUALIFY ROW_NUMBER() OVER (
-        PARTITION BY din
-        ORDER BY 
-            CASE product_status_extract
-                WHEN 'marketed'  THEN 1
-                WHEN 'dormant'   THEN 2
-                WHEN 'cancelled' THEN 3
-                WHEN 'approved'  THEN 4
-            END,
-            drug_code
-    ) = 1
+    SELECT * FROM {{ ref('dim_drug_by_din') }}
 ),
 
 joined AS (
@@ -41,13 +27,6 @@ joined AS (
         s.date_created,
         s.date_updated,
 
-        -- Durations & lead times
-        --
-        -- Avoided shortages: actual_start_date is the anticipated future date,
-        -- so any calculated duration would be misleading.
-        --
-        -- ~6 resolved records from 2017-2018 have end_date < start_date,
-        -- likely data entry errors during the first year of mandatory reporting.
         CASE 
             WHEN s.shortage_status = 'Avoided shortage'       THEN NULL
             WHEN s.actual_end_date < s.actual_start_date      THEN NULL
@@ -57,8 +36,6 @@ joined AS (
         DATEDIFF('day', s.estimated_end_date, s.actual_end_date) AS duration_estimate_error_days,
         (s.shortage_status != 'Avoided shortage' 
          AND s.actual_end_date < s.actual_start_date) AS has_suspect_dates,
-        DATEDIFF('day', s.anticipated_start_date, s.actual_start_date) AS lead_time_days,
-        DATEDIFF('day', s.estimated_end_date, s.actual_end_date) AS duration_estimate_error_days,
 
         (s.shortage_status = 'Resolved')             AS is_resolved,
         (s.shortage_status = 'Actual shortage')      AS is_active,
