@@ -1,0 +1,147 @@
+version: 2
+
+models:
+  - name: mrt_shortage_panel
+    description: >
+      Analytics-ready panel for shortage prediction modelling. One row per
+      (din, observation_date) at month-start granularity, joining the labeled
+      spine (int_drug_month_spine) to the feature set (int_shortage_features).
+      This is the single table the ML training pipeline consumes.
+    data_tests:
+      - dbt_utils.unique_combination_of_columns:
+          arguments:
+            combination_of_columns:
+              - observation_date
+              - din
+      - dbt_utils.equal_rowcount:
+          arguments:
+            compare_model: ref('int_drug_month_spine')
+    columns:
+      # === Keys ===
+      - name: observation_date
+        description: "First of the month. All features reflect state as of this date."
+        data_tests:
+          - not_null
+      - name: din
+        description: "Drug Identification Number."
+        data_tests:
+          - not_null
+          - relationships:
+              arguments:
+                to: ref('dim_drug_by_din')
+                field: din
+      - name: drug_code
+        description: "Internal Health Canada drug identifier."
+        data_tests:
+          - not_null
+
+      # === Labels ===
+      - name: shortage_started_within_90d
+        description: >
+          Binary target. 1 if a new shortage started in (observation_date,
+          observation_date + 90 days] AND there was no ongoing shortage on
+          observation_date. 0 otherwise.
+        data_tests:
+          - not_null
+          - accepted_values:
+              arguments:
+                values: [0, 1]
+      - name: was_in_shortage_on_obs_date
+        description: >
+          1 if the drug was in an ongoing shortage on observation_date.
+          Typically used as an exclusion flag at training time.
+        data_tests:
+          - not_null
+          - accepted_values:
+              arguments:
+                values: [0, 1]
+
+      # === Drug attributes ===
+      - name: drug_age_years
+        description: "Years between first_marketed_date and observation_date."
+      - name: atc_code_full
+        description: "Full 7-character ATC code."
+      - name: atc_anatomic_group
+        description: "ATC level 1 (1 character). Broad anatomic group."
+      - name: atc_therapeutic_group
+        description: "ATC level 2 (3 characters). Therapeutic subgroup."
+      - name: primary_form
+        description: "Primary pharmaceutical form (tablet, injection, etc.)."
+      - name: primary_route
+        description: "Primary route of administration."
+      - name: schedule
+        description: "Prescription schedule."
+      - name: ingredient_count
+        description: "Number of distinct active ingredients."
+      - name: is_pediatric
+        description: "TRUE if flagged as pediatric."
+      - name: has_atc_classification
+        description: "TRUE if the drug has an ATC code."
+
+      # === Shortage history features ===
+      - name: shortages_prior_12m
+        description: "Count of shortage report starts in prior 12 months."
+        data_tests:
+          - not_null
+          - dbt_utils.accepted_range:
+              arguments:
+                min_value: 0
+      - name: shortages_prior_36m
+        description: "Count of shortage report starts in prior 36 months."
+        data_tests:
+          - not_null
+          - dbt_utils.accepted_range:
+              arguments:
+                min_value: 0
+      - name: shortages_all_prior
+        description: "Count of all shortage report starts strictly before observation_date."
+        data_tests:
+          - not_null
+          - dbt_utils.accepted_range:
+              arguments:
+                min_value: 0
+      - name: days_since_last_shortage
+        description: "Days from most recent prior shortage start to obs date. NULL if no prior shortage."
+      - name: days_since_first_shortage
+        description: "Days from earliest prior shortage start to obs date. NULL if no prior shortage."
+      - name: longest_prior_shortage_days
+        description: "Duration (days) of longest fully-resolved prior shortage. NULL if none."
+      - name: was_ever_in_shortage
+        description: "TRUE if the drug had any prior shortage record before obs date."
+        data_tests:
+          - not_null
+
+      # === Manufacturer features ===
+      - name: mfr_portfolio_size
+        description: "Count of on-market DINs held by this drug's manufacturer as of obs date."
+        data_tests:
+          - not_null
+          - dbt_utils.accepted_range:
+              arguments:
+                min_value: 0
+      - name: mfr_shortages_prior_12m
+        description: "Count of shortage reports across all of manufacturer's DINs in prior 12 months."
+        data_tests:
+          - not_null
+          - dbt_utils.accepted_range:
+              arguments:
+                min_value: 0
+      - name: mfr_shortage_rate_12m
+        description: "mfr_shortages_prior_12m divided by mfr_portfolio_size. Zero if portfolio is empty."
+        data_tests:
+          - not_null
+
+      # === Market structure ===
+      - name: competing_drugs_same_ai_group
+        description: "Count of other on-market DINs sharing this drug's ai_group_no."
+        data_tests:
+          - not_null
+          - dbt_utils.accepted_range:
+              arguments:
+                min_value: 0
+
+      # === Metadata ===
+      - name: dbt_loaded_at
+        description: "Timestamp of the dbt run that built this row. Useful for debugging stale runs."
+        data_tests:
+          - not_null

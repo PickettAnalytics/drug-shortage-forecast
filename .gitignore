@@ -5,6 +5,8 @@ __pycache__/
 *.pyc
 .ipynb_checkpoints/
 .DS_Store
+baseline_results/
+eda_mrt_shortage_panel.ipynb
 
 # DuckDB database files - regenerable from ingestion scripts
 *.duckdb
