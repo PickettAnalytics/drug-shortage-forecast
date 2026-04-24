@@ -38,7 +38,7 @@ joined AS (
         f.is_pediatric,
         f.has_atc_classification,
 
-        -- === Shortage history features ===
+        -- === Own-drug shortage history ===
         f.shortages_prior_12m,
         f.shortages_prior_36m,
         f.shortages_all_prior,
@@ -47,13 +47,28 @@ joined AS (
         f.longest_prior_shortage_days,
         f.was_ever_in_shortage,
 
-        -- === Manufacturer features ===
+        -- === Manufacturer (with trajectory) ===
         f.mfr_portfolio_size,
         f.mfr_shortages_prior_12m,
         f.mfr_shortage_rate_12m,
+        f.mfr_shortage_rate_3m,
+        f.mfr_shortage_rate_delta_3m_vs_12m,
 
-        -- === Market structure ===
+        -- === Market structure (with concentration) ===
         f.competing_drugs_same_ai_group,
+        f.mfr_share_of_ai_group,
+        f.n_manufacturers_in_ai_group,
+
+        -- === Peer shortage signals ===
+        f.peer_shortages_prior_12m_same_ai_group,
+        f.peer_any_in_shortage_now_same_ai_group,
+
+        -- === Discontinuation signals ===
+        f.peer_discontinuations_prior_12m,
+        f.peer_discontinuations_prior_36m,
+        f.days_since_peer_discontinuation,
+        f.mfr_discontinuations_prior_12m,
+        f.mfr_discontinuation_rate_12m,
 
         -- === Metadata ===
         CURRENT_TIMESTAMP AS dbt_loaded_at

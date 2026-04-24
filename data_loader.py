@@ -2,23 +2,7 @@
 Data loader for the drug shortage prediction panel.
 
 Single public entry point: `load_splits()` returns train / val / test
-DataFrames from main_marts.mrt_shortage_panel, with:
-
-  - rows where the drug is currently in shortage (was_in_shortage_on_obs_date = 1)
-    removed from all splits — the target "shortage starts in next 90 days"
-    only makes sense for eligible drugs.
-  - temporal splits per the EDA decisions (see SPLITS below).
-  - 3-month buffers between train/val and val/test so the 90-day forward
-    label can't leak across the boundary.
-  - dtypes set correctly for downstream modelling (categoricals as category,
-    booleans as bool, nullable integers preserved).
-
-Usage:
-    from data_loader import load_splits, TARGET, FEATURES
-
-    train, val, test = load_splits()
-    X_train = train[FEATURES]
-    y_train = train[TARGET]
+DataFrames from main_marts.mrt_shortage_panel.
 """
 
 from __future__ import annotations
@@ -31,32 +15,21 @@ import duckdb
 import pandas as pd
 
 
-# ---------------------------------------------------------------------------
-# Configuration
-# ---------------------------------------------------------------------------
-
 DEFAULT_DB_PATH = Path(r"E:\Projects\drug-shortage-forecast\drug_shortages.duckdb")
 PANEL_TABLE = "main_marts.mrt_shortage_panel"
 
 TARGET = "shortage_started_within_90d"
 EXCLUSION_FLAG = "was_in_shortage_on_obs_date"
 
-# Split boundaries, derived from the EDA.
-#   - Training spans all three temporal regimes (pre-COVID, COVID dip, recovery).
-#   - Buffers are 3 months wide because the label peeks 90 days forward;
-#     without them, the last training month's label window overlaps the
-#     first validation month.
-#   - Test is held for a single final evaluation, not for tuning.
+
 @dataclass(frozen=True)
 class SplitConfig:
     train_start: date = date(2018, 1, 1)
-    train_end:   date = date(2023, 6, 1)    # inclusive
-    # buffer:   2023-07-01 .. 2023-09-01   excluded
+    train_end:   date = date(2023, 6, 1)
     val_start:   date = date(2023, 10, 1)
-    val_end:     date = date(2024, 6, 1)    # inclusive
-    # buffer:   2024-07-01 .. 2024-09-01   excluded
+    val_end:     date = date(2024, 6, 1)
     test_start:  date = date(2024, 10, 1)
-    test_end:    date = date(2025, 6, 1)    # inclusive
+    test_end:    date = date(2025, 6, 1)
 
 
 SPLITS = SplitConfig()
@@ -65,59 +38,63 @@ SPLITS = SplitConfig()
 # ---------------------------------------------------------------------------
 # Feature groups
 # ---------------------------------------------------------------------------
-# Explicit lists rather than "everything except target" so that schema
-# changes don't silently alter the feature set.
 
 NUMERIC_FEATURES = [
+    # Drug intrinsic
     "drug_age_years",
     "ingredient_count",
+    # Own-DIN shortage history
     "shortages_prior_12m",
     "shortages_prior_36m",
     "shortages_all_prior",
     "days_since_last_shortage",
     "days_since_first_shortage",
     "longest_prior_shortage_days",
+    # Manufacturer
     "mfr_portfolio_size",
     "mfr_shortages_prior_12m",
     "mfr_shortage_rate_12m",
+    "mfr_shortage_rate_3m",
+    "mfr_shortage_rate_delta_3m_vs_12m",
+    # Market structure
     "competing_drugs_same_ai_group",
+    "mfr_share_of_ai_group",
+    "n_manufacturers_in_ai_group",
+    # Peer shortage
+    "peer_shortages_prior_12m_same_ai_group",
+    # Discontinuation
+    "peer_discontinuations_prior_12m",
+    "peer_discontinuations_prior_36m",
+    "days_since_peer_discontinuation",
+    "mfr_discontinuations_prior_12m",
+    "mfr_discontinuation_rate_12m",
 ]
 
 BOOLEAN_FEATURES = [
     "is_pediatric",
     "has_atc_classification",
     "was_ever_in_shortage",
+    "peer_any_in_shortage_now_same_ai_group",
 ]
 
-# Ordered low to high cardinality. For linear models, target-encode the
-# high-cardinality ones; for trees, just pass as category and let the
-# splitter handle it.
 CATEGORICAL_FEATURES_LOW_CARD = [
-    "schedule",              # 13
-    "atc_anatomic_group",    # 15
+    "schedule",
+    "atc_anatomic_group",
 ]
 CATEGORICAL_FEATURES_HIGH_CARD = [
-    "primary_route",         # 71
-    "atc_therapeutic_group", # 93
-    "primary_form",          # 95
-    # atc_code_full (1,881) intentionally excluded — use therapeutic group instead
+    "primary_route",
+    "atc_therapeutic_group",
+    "primary_form",
 ]
 
 CATEGORICAL_FEATURES = CATEGORICAL_FEATURES_LOW_CARD + CATEGORICAL_FEATURES_HIGH_CARD
 
 FEATURES = NUMERIC_FEATURES + BOOLEAN_FEATURES + CATEGORICAL_FEATURES
 
-# Columns we want to carry alongside features/target for diagnostics and
-# stratified evaluation, but not feed to the model.
 META_COLS = ["observation_date", "din", "drug_code"]
 
 
-# ---------------------------------------------------------------------------
-# Loading
-# ---------------------------------------------------------------------------
-
 def _load_raw(db_path: Path) -> pd.DataFrame:
-    """Fetch the full panel from DuckDB."""
     if not db_path.exists():
         raise FileNotFoundError(f"DuckDB file not found at {db_path.resolve()}")
 
@@ -131,30 +108,17 @@ def _load_raw(db_path: Path) -> pd.DataFrame:
 
 
 def _coerce_dtypes(df: pd.DataFrame) -> pd.DataFrame:
-    """
-    Set dtypes that survive the groupby/join chain and work with both
-    sklearn and gradient-boosted tree libraries.
-    """
     df = df.copy()
-
-    # observation_date arrives as datetime64; normalize to date-at-midnight
-    # for clean comparisons against SplitConfig values.
     df["observation_date"] = pd.to_datetime(df["observation_date"])
 
-    # Boolean columns sometimes arrive as object dtype depending on DuckDB version
     for col in BOOLEAN_FEATURES + [EXCLUSION_FLAG]:
         df[col] = df[col].astype("bool")
 
-    # Target as small int (not bool) so .mean() gives a rate and sklearn is happy
     df[TARGET] = df[TARGET].astype("int8")
 
-    # Categoricals — keeping nulls as a distinct category is meaningful
-    # for atc_* (8.5% null = radiopharmaceuticals and other classification gaps)
     for col in CATEGORICAL_FEATURES:
         df[col] = df[col].astype("category")
 
-    # Numeric features: leave nullable where the null is meaningful
-    # (days_since_last_shortage etc.), cast the rest to float64
     for col in NUMERIC_FEATURES:
         df[col] = pd.to_numeric(df[col], errors="coerce")
 
@@ -162,12 +126,10 @@ def _coerce_dtypes(df: pd.DataFrame) -> pd.DataFrame:
 
 
 def _apply_exclusion(df: pd.DataFrame) -> pd.DataFrame:
-    """Drop rows where the drug is already in a shortage on the observation date."""
     return df[~df[EXCLUSION_FLAG]].drop(columns=[EXCLUSION_FLAG]).reset_index(drop=True)
 
 
 def _slice_split(df: pd.DataFrame, start: date, end: date) -> pd.DataFrame:
-    """Inclusive range on observation_date."""
     start_ts = pd.Timestamp(start)
     end_ts = pd.Timestamp(end)
     mask = (df["observation_date"] >= start_ts) & (df["observation_date"] <= end_ts)
@@ -179,13 +141,6 @@ def load_splits(
     splits: SplitConfig = SPLITS,
     verbose: bool = True,
 ) -> tuple[pd.DataFrame, pd.DataFrame, pd.DataFrame]:
-    """
-    Load the panel, apply the currently-in-shortage exclusion, and return
-    (train, val, test) DataFrames according to `splits`.
-
-    Each returned frame contains META_COLS + [TARGET] + FEATURES.
-    The exclusion flag column is dropped before returning.
-    """
     db_path = Path(db_path)
 
     raw = _load_raw(db_path)
@@ -201,10 +156,6 @@ def load_splits(
 
     return train, val, test
 
-
-# ---------------------------------------------------------------------------
-# Reporting
-# ---------------------------------------------------------------------------
 
 def _print_split_summary(
     eligible: pd.DataFrame,
@@ -233,11 +184,8 @@ def _print_split_summary(
           f"({used_rows/total_panel_rows:.1%})")
     print(f"  {'Rows in buffers / unused tail:':<36} "
           f"{total_panel_rows - used_rows:>9,}")
+    print(f"  {'Total features:':<36} {len(FEATURES):>9,}")
 
-
-# ---------------------------------------------------------------------------
-# Self-test
-# ---------------------------------------------------------------------------
 
 if __name__ == "__main__":
     train, val, test = load_splits()
@@ -245,25 +193,17 @@ if __name__ == "__main__":
     print("\nSanity checks")
     print("-" * 80)
 
-    # Grain
     for name, df in [("train", train), ("val", val), ("test", test)]:
         dups = df.duplicated(subset=["observation_date", "din"]).sum()
         print(f"  {name:<6} duplicate (obs_date, din) rows: {dups}")
 
-    # No temporal overlap
     assert train["observation_date"].max() < pd.Timestamp(SPLITS.val_start), \
         "Train/val overlap"
     assert val["observation_date"].max() < pd.Timestamp(SPLITS.test_start), \
         "Val/test overlap"
     print("  train/val/test temporal boundaries clean")
 
-    # No exclusion-flag rows survived
-    # (flag column was dropped, so re-check via the panel's null-free features)
     print(f"  train rows with NaN target: {train[TARGET].isna().sum()}")
 
-    # Feature coverage
     missing = [c for c in FEATURES if c not in train.columns]
     print(f"  features missing from train: {missing if missing else 'none'}")
-
-    print("\nFirst 3 rows of train:")
-    print(train.head(3).to_string(index=False))

@@ -29,3 +29,11 @@ sources:
         description: "DPD marketing status history, multiple rows per drug across time"
       - name: dpd_schedule_raw
         description: "DPD prescription schedules"
+
+      # openFDA drug shortages
+      - name: fda_shortages_raw
+        description: >
+          openFDA drug shortages export. Loaded via load_fda_shortages.py from
+          a JSON snapshot of the openFDA /drug/shortages.json API.
+          Flattened to a single table; combination products have ingredients
+          pipe-delimited in openfda_substance_names_pipe.

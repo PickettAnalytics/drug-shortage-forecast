@@ -13,36 +13,24 @@ models:
         data_tests:
           - unique
           - not_null
-
       - name: din
         description: >
           Drug Identification Number, zero-padded to 8 characters.
-          NULL for radiopharmaceuticals (Schedule C) which don't receive DINs.
+          NULL for radiopharmaceuticals (Schedule C).
         data_tests:
           - not_null:
               config:
                 where: "has_din = true"
-
       - name: has_din
-        description: >
-          TRUE if the report has a valid DIN. FALSE for radiopharmaceuticals
-          and other Schedule C products that don't receive DINs under Canadian
-          regulations.
         data_tests:
           - not_null
-
       - name: brand_name
-        description: "Drug brand name as submitted by the manufacturer."
         data_tests:
           - not_null
-
       - name: company_name
-        description: "Manufacturer or market authorization holder."
         data_tests:
           - not_null
-
       - name: shortage_status
-        description: "Current status of the shortage."
         data_tests:
           - not_null
           - accepted_values:
@@ -52,89 +40,57 @@ models:
                   - 'Actual shortage'
                   - 'Avoided shortage'
                   - 'Anticipated shortage'
-
       - name: is_tier_3
-        description: "TRUE for Tier 3 shortages (highest clinical impact)."
         data_tests:
           - not_null
 
   - name: stg_hc_discontinuations
     description: >
       Cleaned Health Canada drug discontinuation reports. One row per report.
-      Similar structure to shortages but with discontinuation-specific fields.
     columns:
       - name: report_id
-        description: "Primary key. Unique identifier for each discontinuation report."
         data_tests:
           - unique
           - not_null
-
       - name: din
-        description: >
-          Drug Identification Number, zero-padded to 8 characters.
-          NULL for radiopharmaceuticals (Schedule C) which don't receive DINs.
         data_tests:
           - not_null:
               config:
                 where: "has_din = true"
-
       - name: has_din
-        description: >
-          TRUE if the report has a valid DIN.
         data_tests:
           - not_null
-
       - name: brand_name
-        description: "Drug brand name as submitted by the manufacturer."
         data_tests:
           - not_null
-
       - name: company_name
-        description: "Manufacturer or market authorization holder."
         data_tests:
           - not_null
-
       - name: discontinuation_status
-        description: "Current status of the discontinuation."
         data_tests:
           - not_null
-
       - name: is_tier_3
-        description: "TRUE for Tier 3 discontinuations."
         data_tests:
           - not_null
 
   - name: stg_dpd_drug
-    description: >
-      Cleaned DPD master drug list. One row per drug_code.
-      Includes drugs across all four status categories (marketed, cancelled, 
-      approved, dormant). Use product_status_extract to filter.
     columns:
       - name: drug_code
-        description: "Internal Health Canada identifier. Primary key."
         data_tests:
           - unique
           - not_null
       - name: din
-        description: >
-          Drug Identification Number, 8 characters.
-          NULL for Schedule C drugs (radiopharmaceuticals) that don't receive DINs.
         data_tests:
           - not_null:
               config:
                 where: "has_din = true"
       - name: has_din
-        description: >
-          TRUE if the drug has a proper DIN. FALSE for Schedule C drugs
-          (radiopharmaceuticals, etc.) that use the "Not Applicable" placeholder.
         data_tests:
           - not_null
       - name: brand_name
-        description: "Brand name as filed with Health Canada."
         data_tests:
           - not_null
       - name: product_status_extract
-        description: "Which DPD extract this row came from."
         data_tests:
           - not_null
           - accepted_values:
@@ -142,10 +98,8 @@ models:
                 values: ['marketed', 'cancelled', 'approved', 'dormant']
  
   - name: stg_dpd_comp
-    description: "Cleaned DPD companies. One row per drug_code (single company per drug)."
     columns:
       - name: drug_code
-        description: "Foreign key to stg_dpd_drug."
         data_tests:
           - unique
           - not_null
@@ -158,11 +112,8 @@ models:
           - not_null
 
   - name: stg_dpd_ingred
-    description: >
-      Cleaned active ingredients. Multiple rows per drug for combination products.
     columns:
       - name: drug_code
-        description: "Foreign key to stg_dpd_drug."
         data_tests:
           - not_null
           - relationships:
@@ -174,7 +125,6 @@ models:
           - not_null
 
   - name: stg_dpd_form
-    description: "Cleaned pharmaceutical forms. May have multiple rows per drug."
     columns:
       - name: drug_code
         data_tests:
@@ -185,7 +135,6 @@ models:
                 field: drug_code
 
   - name: stg_dpd_route
-    description: "Cleaned routes of administration. May have multiple rows per drug."
     columns:
       - name: drug_code
         data_tests:
@@ -196,7 +145,6 @@ models:
                 field: drug_code
 
   - name: stg_dpd_ther
-    description: "Cleaned therapeutic classifications (ATC and AHFS systems)."
     columns:
       - name: drug_code
         data_tests:
@@ -207,9 +155,6 @@ models:
                 field: drug_code
 
   - name: stg_dpd_status
-    description: >
-      Cleaned status history. Multiple rows per drug across time. 
-      Use is_current_status to find the latest record.
     columns:
       - name: drug_code
         data_tests:
@@ -222,14 +167,12 @@ models:
         data_tests:
           - not_null
       - name: history_date
-        description: "Date the status took effect. Required for current records."
         data_tests:
           - not_null:
               config:
                 where: "is_current_status = true"
 
   - name: stg_dpd_schedule
-    description: "Cleaned prescription schedule classifications."
     columns:
       - name: drug_code
         data_tests:
@@ -238,3 +181,35 @@ models:
               arguments:
                 to: ref('stg_dpd_drug')
                 field: drug_code
+
+  - name: stg_fda_shortages
+    description: >
+      Cleaned openFDA drug shortage events. One row per (record × active
+      ingredient) — combination products are exploded into multiple rows.
+      Dates parsed from MM/DD/YYYY. substance_name is upper-trimmed to
+      match against Canadian stg_dpd_ingred.ingredient.
+    columns:
+      - name: initial_posting_date
+        description: "Canonical event date. Filtered to non-null at staging."
+        data_tests:
+          - not_null
+      - name: substance_name
+        description: "Active ingredient, upper/trimmed for matching to Canadian DPD."
+        data_tests:
+          - not_null
+      - name: status
+        description: "FDA lifecycle status at last update."
+        data_tests:
+          - not_null
+          - accepted_values:
+              arguments:
+                values: ['Current', 'Resolved', 'To Be Discontinued']
+      - name: is_active_shortage
+        data_tests:
+          - not_null
+      - name: is_resolved
+        data_tests:
+          - not_null
+      - name: is_to_be_discontinued
+        data_tests:
+          - not_null
