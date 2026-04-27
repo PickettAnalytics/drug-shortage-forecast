@@ -164,9 +164,8 @@ python notebooks/operational_metrics.py
 
 - **Why monotone constraints?** Without them, LightGBM learned interaction
   shapes that down-ranked drugs whose shortage history alone would have
-  put them at the top — the failure mode where pooled P@10 looked great
-  (0.50) but per-month P@10 (0.37) lost to a one-line heuristic. Pinning
-  the gradient direction on the most reliable shortage signals fixed this.
+  put them at the top. Pinning the gradient direction on the most reliable
+  shortage signals improved this.
 
 - **Why blend with a heuristic?** Log-loss is calibrated across the panel,
   not within month, so the GBM's top-K picks were weak in quiet months
