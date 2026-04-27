@@ -22,8 +22,9 @@ import duckdb
 import pandas as pd
 
 
-DB_PATH = Path(r"E:\Projects\drug-shortage-forecast\drug_shortages.duckdb")
-FDA_DIR = Path(r"E:\Projects\drug-shortage-forecast\data\raw\fda")
+PROJECT_ROOT = Path(__file__).resolve().parent.parent
+DB_PATH = PROJECT_ROOT / "drug_shortages.duckdb"
+FDA_DIR = PROJECT_ROOT / "data" / "raw" / "fda"
 RAW_SCHEMA = "raw"
 RAW_TABLE = "fda_shortages_raw"
 

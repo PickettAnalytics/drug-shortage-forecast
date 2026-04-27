@@ -15,7 +15,8 @@ import duckdb
 import pandas as pd
 
 
-DEFAULT_DB_PATH = Path(r"E:\Projects\drug-shortage-forecast\drug_shortages.duckdb")
+PROJECT_ROOT = Path(__file__).resolve().parent.parent
+DEFAULT_DB_PATH = PROJECT_ROOT / "drug_shortages.duckdb"
 PANEL_TABLE = "main_marts.mrt_shortage_panel"
 
 TARGET = "shortage_started_within_90d"
