@@ -168,19 +168,52 @@ def build_logistic_pipeline() -> Pipeline:
     ])
 
 
-def build_lightgbm_model() -> lgb.LGBMClassifier:
-    """LightGBM with sensible defaults, no tuning yet.
+# Per-feature monotone constraints encode a domain prior strong enough to
+# pin the model's gradient direction on its most reliable signals: more
+# recent shortage activity must monotonically raise predicted risk, and
+# more days since the last shortage must monotonically lower it. This
+# stops the GBM from learning interaction shapes that downrank drugs
+# whose shortage history alone would already place them near the top —
+# the failure mode we observed when per-month P@10 trailed a heuristic
+# that did nothing but sort on shortages_prior_12m.
+MONOTONE_INCREASING_FEATURES = {
+    "shortages_prior_12m",
+    "shortages_prior_36m",
+    "shortages_all_prior",
+    "mfr_shortages_prior_12m",
+    "mfr_shortage_rate_12m",
+}
+MONOTONE_DECREASING_FEATURES = {
+    "days_since_last_shortage",
+}
 
-    Key decisions:
-    - is_unbalance=True lets LightGBM up-weight the minority class internally
-    - n_estimators=500 with early stopping on validation
-    - Categoricals passed via dtype, LightGBM handles them natively
+
+def _monotone_constraints(feature_cols: list[str]) -> list[int]:
+    out = []
+    for f in feature_cols:
+        if f in MONOTONE_INCREASING_FEATURES:
+            out.append(1)
+        elif f in MONOTONE_DECREASING_FEATURES:
+            out.append(-1)
+        else:
+            out.append(0)
+    return out
+
+
+def build_lightgbm_model() -> lgb.LGBMClassifier:
+    """LightGBM binary classifier with monotone constraints on shortage signals.
+
+    Constraints (see MONOTONE_INCREASING_FEATURES / MONOTONE_DECREASING_FEATURES)
+    pin the model's gradient direction on the features the heuristic relies on;
+    the GBM is free to learn anything it likes off the remaining features.
     """
     return lgb.LGBMClassifier(
         n_estimators=2000,
         learning_rate=0.02,
         num_leaves=25,
         min_child_samples=150,
+        monotone_constraints=_monotone_constraints(FEATURES),
+        monotone_constraints_method="basic",
         random_state=RANDOM_STATE,
         verbose=-1,
     )

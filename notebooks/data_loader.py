@@ -62,6 +62,8 @@ NUMERIC_FEATURES = [
     "days_since_last_shortage",
     "days_since_first_shortage",
     "longest_prior_shortage_days",
+    "avg_inter_shortage_interval_days",
+    "days_overdue",
     # Manufacturer
     "mfr_portfolio_size",
     "mfr_shortages_prior_12m",

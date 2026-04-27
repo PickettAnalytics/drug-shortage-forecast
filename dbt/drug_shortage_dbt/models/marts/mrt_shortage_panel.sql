@@ -14,6 +14,10 @@ features AS (
     SELECT * FROM {{ ref('int_shortage_features') }}
 ),
 
+fda AS (
+    SELECT * FROM {{ ref('int_fda_features') }}
+),
+
 joined AS (
     SELECT
         -- === Keys ===
@@ -46,6 +50,8 @@ joined AS (
         f.days_since_first_shortage,
         f.longest_prior_shortage_days,
         f.was_ever_in_shortage,
+        f.avg_inter_shortage_interval_days,
+        f.days_overdue,
 
         -- === Manufacturer (with trajectory) ===
         f.mfr_portfolio_size,
@@ -70,6 +76,17 @@ joined AS (
         f.mfr_discontinuations_prior_12m,
         f.mfr_discontinuation_rate_12m,
 
+        -- === FDA shortage signals (used by cold-start model only) ===
+        fda.fda_ingredient_match_flag,
+        fda.fda_active_ingredients_in_us_shortage,
+        fda.fda_ingredients_in_us_shortage_12m,
+
+        -- === Formulary coverage (CIHI) ===
+        f.n_jurisdictions_on_formulary,
+        f.n_programs_as_benefit,
+        f.formulary_is_generic,
+        f.formulary_is_biologics,
+
         -- === Metadata ===
         CURRENT_TIMESTAMP AS dbt_loaded_at
 
@@ -77,6 +94,9 @@ joined AS (
     LEFT JOIN features f
         ON s.observation_date = f.observation_date
        AND s.din = f.din
+    LEFT JOIN fda
+        ON s.observation_date = fda.observation_date
+       AND s.din = fda.din
 )
 
 SELECT * FROM joined

@@ -76,6 +76,8 @@ models:
       - name: was_ever_in_shortage
         data_tests:
           - not_null
+      - name: avg_inter_shortage_interval_days
+      - name: days_overdue
 
       # Manufacturer
       - name: mfr_portfolio_size
@@ -149,6 +151,41 @@ models:
           - not_null
           - dbt_utils.accepted_range:
               arguments: {min_value: 0}
+
+      # FDA shortage signals (cold-start model)
+      - name: fda_ingredient_match_flag
+        data_tests:
+          - not_null
+          - accepted_values:
+              arguments: {values: [0, 1]}
+      - name: fda_active_ingredients_in_us_shortage
+        data_tests:
+          - not_null
+          - dbt_utils.accepted_range:
+              arguments: {min_value: 0}
+      - name: fda_ingredients_in_us_shortage_12m
+        data_tests:
+          - not_null
+          - dbt_utils.accepted_range:
+              arguments: {min_value: 0}
+
+      # Formulary coverage (CIHI)
+      - name: n_jurisdictions_on_formulary
+        data_tests:
+          - not_null
+          - dbt_utils.accepted_range:
+              arguments: {min_value: 0, max_value: 12}
+      - name: n_programs_as_benefit
+        data_tests:
+          - not_null
+          - dbt_utils.accepted_range:
+              arguments: {min_value: 0}
+      - name: formulary_is_generic
+        data_tests:
+          - not_null
+      - name: formulary_is_biologics
+        data_tests:
+          - not_null
 
       # Metadata
       - name: dbt_loaded_at

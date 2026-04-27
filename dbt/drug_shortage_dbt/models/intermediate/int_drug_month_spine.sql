@@ -7,7 +7,7 @@ WITH months AS (
         SELECT UNNEST(
             GENERATE_SERIES(
                 DATE '2018-01-01',
-                DATE '2025-09-01',
+                DATE '2026-01-01',
                 INTERVAL '1 month'
             )
         ) AS month_start

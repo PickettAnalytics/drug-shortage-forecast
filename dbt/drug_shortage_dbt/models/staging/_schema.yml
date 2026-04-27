@@ -182,6 +182,36 @@ models:
                 to: ref('stg_dpd_drug')
                 field: drug_code
 
+  - name: stg_cihi_formulary
+    description: >
+      Cleaned CIHI formulary coverage records. One row per
+      (jurisdiction × drug_program × DIN × coverage_period).
+      DIN is zero-padded to 8 characters. coverage_end_date IS NULL
+      means the coverage is still active.
+    columns:
+      - name: din
+        description: "8-character zero-padded Drug Identification Number."
+        data_tests:
+          - not_null
+      - name: jurisdiction
+        data_tests:
+          - not_null
+      - name: drug_program
+        data_tests:
+          - not_null
+      - name: benefit_status
+        data_tests:
+          - not_null
+          - accepted_values:
+              arguments:
+                values: ['Benefit', 'Restricted', 'Limited']
+      - name: drug_type
+        data_tests:
+          - not_null
+      - name: coverage_start_date
+        data_tests:
+          - not_null
+
   - name: stg_fda_shortages
     description: >
       Cleaned openFDA drug shortage events. One row per (record × active

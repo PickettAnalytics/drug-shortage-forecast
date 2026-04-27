@@ -13,6 +13,10 @@
 --   Group 4: Market structure (incl. concentration measures)
 --   Group 5: Peer shortage signals (shortages on OTHER DINs in same molecule)
 --   Group 6: Discontinuation signals (peer and manufacturer discontinuations)
+--   Group 7: Formulary coverage (CIHI) — demand breadth and drug type
+--             n_jurisdictions_on_formulary: provinces with active coverage at obs_date (0–12)
+--             n_programs_as_benefit: programs listing this DIN as a full Benefit
+--             formulary_is_generic / formulary_is_biologics: static DIN classification
 --
 -- NOTE: An earlier iteration (preserved in git history) tested adding
 -- openFDA shortage signals as a seventh group. Subgroup evaluation showed
@@ -206,6 +210,73 @@ din_own_ai_group_contribution AS (
     GROUP BY s.observation_date, s.din
 ),
 
+-- === Group 2b: Shortage cycle timing ===
+-- Computes the average interval between consecutive shortage starts per DIN,
+-- restricted to shortages strictly prior to observation_date. Requires ≥2
+-- prior shortage start dates; NULL otherwise (< 2 prior shortages).
+shortage_intervals AS (
+    SELECT
+        s.observation_date,
+        s.din,
+        DATEDIFF('day',
+            LAG(f.actual_start_date) OVER (
+                PARTITION BY s.din, s.observation_date
+                ORDER BY f.actual_start_date
+            ),
+            f.actual_start_date
+        ) AS interval_days
+    FROM spine s
+    INNER JOIN {{ ref('fct_shortage_episode') }} f
+        ON s.din = f.din
+        AND f.actual_start_date < s.observation_date
+    WHERE f.actual_start_date IS NOT NULL
+),
+
+shortage_cycle_timing AS (
+    SELECT
+        observation_date,
+        din,
+        AVG(interval_days) AS avg_inter_shortage_interval_days
+    FROM shortage_intervals
+    WHERE interval_days IS NOT NULL  -- NULL for the first shortage (no LAG predecessor)
+    GROUP BY observation_date, din
+),
+
+-- === Group 7: Formulary coverage (CIHI) ===
+--
+-- Drug type (Generic/Biologics) is a static property of the DIN in CIHI's
+-- database; it does not change across programs or time. Computed once at
+-- DIN level using any coverage record, then joined on DIN only.
+formulary_din_type AS (
+    SELECT
+        din,
+        MAX(CASE WHEN drug_type = 'Generic'   THEN 1 ELSE 0 END) AS formulary_is_generic,
+        MAX(CASE WHEN drug_type = 'Biologics' THEN 1 ELSE 0 END) AS formulary_is_biologics
+    FROM {{ ref('stg_cihi_formulary') }}
+    GROUP BY din
+),
+
+-- Time-scoped coverage at each (din, observation_date):
+-- a record is active when coverage_start_date <= observation_date
+-- AND (coverage_end_date IS NULL OR coverage_end_date > observation_date).
+formulary_coverage AS (
+    SELECT
+        s.observation_date,
+        s.din,
+        COUNT(DISTINCT f.jurisdiction) FILTER (
+            WHERE f.coverage_start_date <= s.observation_date
+              AND (f.coverage_end_date IS NULL OR f.coverage_end_date > s.observation_date)
+        ) AS n_jurisdictions_on_formulary,
+        COUNT(*) FILTER (
+            WHERE f.coverage_start_date <= s.observation_date
+              AND (f.coverage_end_date IS NULL OR f.coverage_end_date > s.observation_date)
+              AND f.benefit_status = 'Benefit'
+        ) AS n_programs_as_benefit
+    FROM spine s
+    LEFT JOIN {{ ref('stg_cihi_formulary') }} f ON s.din = f.din
+    GROUP BY s.observation_date, s.din
+),
+
 -- === Group 6: Discontinuation signals ===
 discontinuations_enriched AS (
     SELECT
@@ -283,6 +354,9 @@ final AS (
         dsh.days_since_last_shortage,
         dsh.longest_prior_shortage_days,
         (COALESCE(dsh.shortages_all_prior, 0) > 0) AS was_ever_in_shortage,
+        -- Cycle timing (NULL when < 2 prior shortages)
+        sct.avg_inter_shortage_interval_days,
+        dsh.days_since_last_shortage - sct.avg_inter_shortage_interval_days AS days_overdue,
 
         -- Group 3: Manufacturer
         COALESCE(mps.mfr_portfolio_size, 0)      AS mfr_portfolio_size,
@@ -342,15 +416,23 @@ final AS (
             AS mfr_discontinuations_prior_12m,
         CASE
             WHEN mps.mfr_portfolio_size > 0
-            THEN CAST(COALESCE(mdd.mfr_discontinuations_prior_12m, 0) AS DOUBLE) 
+            THEN CAST(COALESCE(mdd.mfr_discontinuations_prior_12m, 0) AS DOUBLE)
                  / mps.mfr_portfolio_size
             ELSE 0
-        END AS mfr_discontinuation_rate_12m
+        END AS mfr_discontinuation_rate_12m,
+
+        -- Group 7: Formulary coverage (CIHI)
+        COALESCE(fc.n_jurisdictions_on_formulary, 0) AS n_jurisdictions_on_formulary,
+        COALESCE(fc.n_programs_as_benefit, 0)        AS n_programs_as_benefit,
+        COALESCE(fdt.formulary_is_generic,   0) = 1  AS formulary_is_generic,
+        COALESCE(fdt.formulary_is_biologics, 0) = 1  AS formulary_is_biologics
 
     FROM spine s
     LEFT JOIN drug_attrs_base dab ON s.din = dab.din
-    LEFT JOIN drug_shortage_history dsh 
+    LEFT JOIN drug_shortage_history dsh
         ON s.observation_date = dsh.observation_date AND s.din = dsh.din
+    LEFT JOIN shortage_cycle_timing sct
+        ON s.observation_date = sct.observation_date AND s.din = sct.din
     LEFT JOIN mfr_portfolio_size_by_date mps 
         ON s.observation_date = mps.observation_date AND dab.company_code = mps.company_code
     LEFT JOIN mfr_shortages_by_date msd 
@@ -370,6 +452,10 @@ final AS (
         ON s.observation_date = agd.observation_date AND my_ag.ai_group_no = agd.ai_group_no
     LEFT JOIN mfr_discontinuations_by_date mdd
         ON s.observation_date = mdd.observation_date AND dab.company_code = mdd.company_code
+    LEFT JOIN formulary_coverage fc
+        ON s.observation_date = fc.observation_date AND s.din = fc.din
+    LEFT JOIN formulary_din_type fdt
+        ON s.din = fdt.din
 )
 
 SELECT * FROM final

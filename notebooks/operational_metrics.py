@@ -71,6 +71,42 @@ def score_heuristic_compound(test: pd.DataFrame) -> np.ndarray:
     return primary + 0.01 * secondary + jitter
 
 
+def _within_month_rank(scores: np.ndarray, observation_dates: np.ndarray) -> np.ndarray:
+    """Per-month rank of each row (higher score = higher rank). Ties are
+    broken by the row's average rank to keep the transform stable.
+
+    Within-month ranks put every month on the same scale, which is what
+    we need to combine signals that have different per-month calibration
+    (the GBM under-scores quiet months; the heuristic doesn't)."""
+    out = np.empty(len(scores), dtype=float)
+    series = pd.Series(scores)
+    for date in pd.unique(observation_dates):
+        mask = observation_dates == date
+        out[mask] = series[mask].rank(method="average").to_numpy()
+    return out
+
+
+def score_blended(
+    test: pd.DataFrame,
+    gbm_scores: np.ndarray,
+    heuristic_scores: np.ndarray,
+    gbm_weight: float = 2.0,
+    heuristic_weight: float = 1.0,
+) -> np.ndarray:
+    """Weighted sum of within-month ranks of the GBM and heuristic scores.
+
+    The GBM is well-calibrated across months and dominant past K=10; the
+    heuristic is robust at the very top but blind to everything else.
+    Adding within-month ranks puts both on the same scale; weighting
+    GBM 2:1 lets the heuristic break top-of-rank ties without overriding
+    the GBM at deeper K."""
+    obs_dates = test["observation_date"].to_numpy()
+    return (
+        gbm_weight * _within_month_rank(gbm_scores, obs_dates)
+        + heuristic_weight * _within_month_rank(heuristic_scores, obs_dates)
+    )
+
+
 def per_month_metrics(
     test: pd.DataFrame,
     scores: np.ndarray,
@@ -140,20 +176,21 @@ def main() -> None:
     print("\nFitting LightGBM (from baseline.py)...")
     gbm = fit_lightgbm(train, val)
     print(f"LightGBM best iteration: {gbm.best_iteration_}")
-
     print("Fitting logistic regression (from baseline.py)...")
     lr = fit_logistic(train, val)
 
-    # --- Score four rankers on test ---
+    # --- Score rankers on test ---
     gbm_scores    = predict_proba(gbm, test)
     lr_scores     = predict_proba(lr,  test)
     heur_1_scores = score_heuristic_single(test)
     heur_2_scores = score_heuristic_compound(test)
+    blend_scores  = score_blended(test, gbm_scores, heur_1_scores)
 
-    monthly_gbm = per_month_metrics(test, gbm_scores,    "lightgbm")
-    monthly_lr  = per_month_metrics(test, lr_scores,     "logistic")
-    monthly_h1  = per_month_metrics(test, heur_1_scores, "heuristic_single")
-    monthly_h2  = per_month_metrics(test, heur_2_scores, "heuristic_compound")
+    monthly_gbm   = per_month_metrics(test, gbm_scores,    "lightgbm")
+    monthly_lr    = per_month_metrics(test, lr_scores,     "logistic")
+    monthly_h1    = per_month_metrics(test, heur_1_scores, "heuristic_single")
+    monthly_h2    = per_month_metrics(test, heur_2_scores, "heuristic_compound")
+    monthly_blend = per_month_metrics(test, blend_scores,  "blend_gbm_heur")
 
     mean_base = monthly_gbm["n_positives"].sum() / monthly_gbm["n_drugs"].sum()
 
@@ -167,13 +204,14 @@ def main() -> None:
         ("logistic", monthly_lr),
         ("heur_1",   monthly_h1),
         ("heur_2",   monthly_h2),
+        ("blend",    monthly_blend),
     ]:
         merged = pd.merge(
             merged,
             df[["observation_date", "hits_at_10"]].rename(columns={"hits_at_10": name}),
             on="observation_date",
         )
-    for col in ["gbm", "logistic", "heur_1", "heur_2"]:
+    for col in ["gbm", "logistic", "heur_1", "heur_2", "blend"]:
         merged[col] = merged[col].astype(int).astype(str) + "/10"
     print(merged.to_string(index=False))
 
@@ -182,32 +220,36 @@ def main() -> None:
     print(f"SUMMARY — per-month Precision@K (mean base rate = {mean_base:.4f})")
     print("=" * 100)
 
-    summary_gbm = summarize(monthly_gbm, mean_base)
-    summary_lr  = summarize(monthly_lr,  mean_base)
-    summary_h1  = summarize(monthly_h1,  mean_base)
-    summary_h2  = summarize(monthly_h2,  mean_base)
+    summary_gbm   = summarize(monthly_gbm,   mean_base)
+    summary_lr    = summarize(monthly_lr,    mean_base)
+    summary_h1    = summarize(monthly_h1,    mean_base)
+    summary_h2    = summarize(monthly_h2,    mean_base)
+    summary_blend = summarize(monthly_blend, mean_base)
 
-    print_summary_table(summary_gbm, "LightGBM (baseline.py)")
-    print_summary_table(summary_lr,  "Logistic regression (baseline.py)")
-    print_summary_table(summary_h1,  "Heuristic 1: shortages_prior_12m only")
-    print_summary_table(summary_h2,  "Heuristic 2: shortages_prior_12m + mfr_rate tiebreak")
+    print_summary_table(summary_gbm,   "LightGBM (monotone-constrained)")
+    print_summary_table(summary_lr,    "Logistic regression (baseline.py)")
+    print_summary_table(summary_h1,    "Heuristic 1: shortages_prior_12m only")
+    print_summary_table(summary_h2,    "Heuristic 2: shortages_prior_12m + mfr_rate tiebreak")
+    print_summary_table(summary_blend, "Blend: within-month rank(GBM) + rank(heur_1)")
 
     # --- Headline comparisons ---
     print("\n" + "=" * 100)
-    print("HEADLINE — LightGBM vs logistic vs heuristics")
+    print("HEADLINE — Blend vs GBM vs heuristics (per-month mean precision)")
     print("=" * 100)
     for k in TOP_K_OPERATIONAL:
-        gbm_mean = summary_gbm.loc[summary_gbm["k"] == k, "mean_precision"].iloc[0]
-        lr_mean  = summary_lr.loc[summary_lr["k"]   == k, "mean_precision"].iloc[0]
-        h1_mean  = summary_h1.loc[summary_h1["k"]   == k, "mean_precision"].iloc[0]
-        h2_mean  = summary_h2.loc[summary_h2["k"]   == k, "mean_precision"].iloc[0]
+        blend_mean = summary_blend.loc[summary_blend["k"] == k, "mean_precision"].iloc[0]
+        gbm_mean   = summary_gbm.loc[summary_gbm["k"]    == k, "mean_precision"].iloc[0]
+        lr_mean    = summary_lr.loc[summary_lr["k"]     == k, "mean_precision"].iloc[0]
+        h1_mean    = summary_h1.loc[summary_h1["k"]     == k, "mean_precision"].iloc[0]
+        h2_mean    = summary_h2.loc[summary_h2["k"]     == k, "mean_precision"].iloc[0]
 
         def lift(target: float) -> str:
             if target <= 0:
                 return "  n/a"
-            return f"{(gbm_mean - target) / target:+.1%}"
+            return f"{(blend_mean - target) / target:+.1%}"
 
-        print(f"  K={k:<4}  LightGBM {gbm_mean:.3f}   "
+        print(f"  K={k:<4}  Blend {blend_mean:.3f}   "
+              f"vs GBM {gbm_mean:.3f} ({lift(gbm_mean)})   "
               f"vs LR {lr_mean:.3f} ({lift(lr_mean)})   "
               f"vs H1 {h1_mean:.3f} ({lift(h1_mean)})   "
               f"vs H2 {h2_mean:.3f} ({lift(h2_mean)})")
