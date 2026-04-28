@@ -131,29 +131,91 @@ drug_shortage_dbt:
       threads: 4
 ```
 
-## Running the pipeline
+## Running the Pipeline
 
-The ingestion scripts that download Health Canada CSVs, the DPD allfiles
-extract, and the CIHI formulary spreadsheet are not included in this
-snapshot — they live under `data/raw/<source>/` which is gitignored to
-keep the repo small. With raw files in place, the rest of the pipeline is:
+The pipeline is wrapped in a `Makefile` at the repo root. The end-to-end
+run is one line:
 
 ```bash
-# 1. (Optional) Refresh openFDA shortage snapshot
-python notebooks/load_fda_shortages.py
+make full_pipeline
+```
 
-# 2. Build dbt models — staging → intermediate → marts
-cd dbt/drug_shortage_dbt
-dbt deps
-dbt build
+That expands to four steps you can also run individually:
 
-# 3. Train models, write metrics + plots to ./baseline_results/
-cd ../..
-python notebooks/baseline.py
+```bash
+make ingest      # load raw HC + openFDA into DuckDB raw schema
+make transform   # dbt deps + dbt run (staging -> intermediate -> marts)
+make test        # dbt test
+make train       # python notebooks/baseline.py — writes ./baseline_results/
+```
 
-# 4. Compare against heuristics with per-month Precision@K
+For a heuristic-vs-model comparison with per-month Precision@K:
+
+```bash
 python notebooks/operational_metrics.py
 ```
+
+If you don't have GNU `make` on your platform (common on Windows without
+WSL), each target maps to a one-liner you can copy out of the `Makefile`.
+
+## Reproducibility & Data Access
+
+The raw datasets that feed this pipeline — Health Canada shortage exports,
+the DPD allfiles extract, openFDA's drug-shortages JSON, and CIHI's
+formulary coverage spreadsheet — are **not committed to this repository**.
+Health Canada and CIHI publish under terms that distinguish "use" from
+"redistribution," and bundling their files into a portfolio repo would
+cross that line. The files are also large enough that committing them
+would balloon clone time for no real benefit.
+
+### Expected inputs
+
+The pipeline expects raw files under `data/raw/`, organised by source:
+
+```
+data/raw/
+├── hc_shortages/        # search_export*.zip from drugshortagescanada.ca
+├── dpd/                 # DPD allfiles extract (drug, ingred, form, ...)
+├── fda/                 # fda_shortages_*.json from openFDA
+├── CIHI/                # provincial formulary coverage spreadsheet
+└── recalls/             # Health Canada recall feed (optional)
+```
+
+The dbt mart `mrt_shortage_panel` is the canonical modelling table — one
+row per `(observation_date, din)` for monthly observation dates from
+2018-01 to the most recent month with a complete 90-day forward label.
+Each row carries the binary `shortage_started_within_90d` target and the
+~50 features documented under "Feature groups" above. Source column-level
+declarations live in `dbt/drug_shortage_dbt/models/staging/_sources.yml`.
+
+### What can be run without raw data
+
+Even with empty `data/raw/`, you can:
+
+- Read the dbt project — model SQL, schema tests, and the panel definition
+  are all checked in under `dbt/drug_shortage_dbt/`. `dbt parse` and
+  `dbt compile` run without the database populated.
+- Read the modelling code — `notebooks/baseline.py`,
+  `notebooks/data_loader.py`, and `notebooks/operational_metrics.py` are
+  self-contained Python.
+- Inspect the EDA / model summary notebooks; their saved cell outputs
+  include the headline tables and figures.
+
+`make transform`, `make test`, and `make train` all require a populated
+DuckDB file at `drug_shortages.duckdb`.
+
+### Plugging in your own data
+
+If you have monthly drug-level shortage data with at least
+`(observation_date, drug_id, shortage_started_within_90d)`, you can adapt
+this project by:
+
+1. Replacing the staging models in `dbt/drug_shortage_dbt/models/staging/`
+   so they point at your sources, while keeping the column names the
+   intermediate models consume.
+2. Updating `SplitConfig` in `notebooks/data_loader.py` so the train /
+   val / test windows match your data range.
+3. Running `make full_pipeline`.
 
 ## Notes on the model
 

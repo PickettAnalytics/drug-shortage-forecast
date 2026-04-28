@@ -1,4 +1,3 @@
-
 """
 Baseline models for drug shortage prediction.
 
@@ -21,6 +20,11 @@ Every metric is reported overall and stratified by:
   - ATC anatomic group (N / C / J / Other)
   - observation month (drift within the evaluation window)
 
+The script is organised around four top-level functions — `load_data`,
+`build_features`, `train_model`, `evaluate_model` — orchestrated by
+`main`. `operational_metrics.py` reuses `build_features` and
+`train_model` directly so the two scripts always train identical models.
+
 Usage:
     python baseline.py
 
@@ -29,6 +33,7 @@ Output goes to ./baseline_results/ as CSV + PNGs.
 
 from __future__ import annotations
 
+import time
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Iterable
@@ -64,6 +69,35 @@ from data_loader import (
 OUTPUT_DIR = Path("./baseline_results")
 TOP_K_VALUES = [10, 25, 100, 500, 1000]
 RANDOM_STATE = 42
+
+
+# ---------------------------------------------------------------------------
+# Data loading & feature prep
+# ---------------------------------------------------------------------------
+
+def load_data() -> tuple[pd.DataFrame, pd.DataFrame, pd.DataFrame]:
+    """Load train/val/test panel splits from the dbt mart via data_loader."""
+    print("Loading panel splits from DuckDB...")
+    train, val, test = load_splits()
+    print(
+        f"  shapes: train={train.shape}  val={val.shape}  test={test.shape}"
+    )
+    return train, val, test
+
+
+def build_features(df: pd.DataFrame) -> tuple[pd.DataFrame, np.ndarray]:
+    """Extract the modelling feature matrix and target from a panel split.
+
+    Casts categorical columns to pandas `category` dtype so LightGBM can
+    treat them natively. The feature list itself is defined in
+    `data_loader.FEATURES` and intentionally not modified here.
+    """
+    X = df[FEATURES].copy()
+    for col in CATEGORICAL_FEATURES:
+        if col in X.columns:
+            X[col] = X[col].astype("category")
+    y = df[TARGET].to_numpy()
+    return X, y
 
 
 # ---------------------------------------------------------------------------
@@ -118,7 +152,7 @@ def compute_metrics(
 
 
 # ---------------------------------------------------------------------------
-# Models
+# Model builders
 # ---------------------------------------------------------------------------
 
 def build_logistic_pipeline() -> Pipeline:
@@ -219,30 +253,65 @@ def build_lightgbm_model() -> lgb.LGBMClassifier:
     )
 
 
-def fit_logistic(train: pd.DataFrame, val: pd.DataFrame) -> Pipeline:
+# ---------------------------------------------------------------------------
+# Training
+# ---------------------------------------------------------------------------
+
+def fit_logistic(X_train: pd.DataFrame, y_train: np.ndarray) -> Pipeline:
+    """Fit the logistic-regression pipeline on a feature matrix."""
     pipe = build_logistic_pipeline()
-    # Logistic regression has no early stopping; ignore val here
-    pipe.fit(train[FEATURES], train[TARGET])
+    pipe.fit(X_train, y_train)
     return pipe
 
 
-def fit_lightgbm(train: pd.DataFrame, val: pd.DataFrame) -> lgb.LGBMClassifier:
+def fit_lightgbm(
+    X_train: pd.DataFrame,
+    y_train: np.ndarray,
+    X_val: pd.DataFrame | None = None,
+    y_val: np.ndarray | None = None,
+) -> lgb.LGBMClassifier:
+    """Fit LightGBM. `(X_val, y_val)` enables early stopping on PR-AUC."""
     model = build_lightgbm_model()
-    # Cast categoricals explicitly so LightGBM knows to treat them natively
-    X_train = train[FEATURES].copy()
-    X_val = val[FEATURES].copy()
-    for col in CATEGORICAL_FEATURES:
-        X_train[col] = X_train[col].astype("category")
-        X_val[col] = X_val[col].astype("category")
-
-    model.fit(
-        X_train, train[TARGET],
-        eval_set=[(X_val, val[TARGET])],
+    fit_kwargs: dict = dict(
         eval_metric="average_precision",
         callbacks=[lgb.early_stopping(stopping_rounds=100, verbose=False)],
         categorical_feature=CATEGORICAL_FEATURES,
     )
+    if X_val is not None and y_val is not None:
+        fit_kwargs["eval_set"] = [(X_val, y_val)]
+    model.fit(X_train, y_train, **fit_kwargs)
     return model
+
+
+def train_model(
+    X_train: pd.DataFrame,
+    y_train: np.ndarray,
+    X_val: pd.DataFrame | None = None,
+    y_val: np.ndarray | None = None,
+) -> dict:
+    """Train both baselines side-by-side and return them in a dict.
+
+    LightGBM uses `(X_val, y_val)` for early stopping when supplied;
+    logistic regression has no early stopping and ignores it.
+    """
+    n_features = X_train.shape[1]
+    pos_rate = float(np.mean(y_train))
+    print(
+        f"Training start | rows={len(X_train):,}  features={n_features}  "
+        f"positive_rate={pos_rate:.4f}"
+    )
+    t0 = time.perf_counter()
+
+    print("  Fitting logistic regression...")
+    lr = fit_logistic(X_train, y_train)
+
+    print("  Fitting LightGBM...")
+    gbm = fit_lightgbm(X_train, y_train, X_val, y_val)
+    print(f"  LightGBM best iteration: {gbm.best_iteration_}")
+
+    elapsed = time.perf_counter() - t0
+    print(f"Training complete in {elapsed:.1f}s.")
+    return {"logistic": lr, "lightgbm": gbm}
 
 
 def predict_proba(model, X: pd.DataFrame) -> np.ndarray:
@@ -256,8 +325,19 @@ def predict_proba(model, X: pd.DataFrame) -> np.ndarray:
 
 
 # ---------------------------------------------------------------------------
-# Stratified evaluation
+# Evaluation
 # ---------------------------------------------------------------------------
+
+def evaluate_model(model, X: pd.DataFrame, y: np.ndarray) -> dict:
+    """Compute the headline metrics for `model` on `(X, y)`.
+
+    Returns the same dict shape as `compute_metrics`. For stratified
+    breakdowns and per-month drift, see `evaluate_all_strata` and
+    `evaluate_monthly_drift`.
+    """
+    scores = predict_proba(model, X)
+    return compute_metrics(np.asarray(y), scores)
+
 
 @dataclass
 class StratifiedSlice:
@@ -442,73 +522,70 @@ def format_table(df: pd.DataFrame) -> str:
 def main() -> None:
     OUTPUT_DIR.mkdir(exist_ok=True)
 
-    # --- Load ---
-    train, val, test = load_splits()
+    # 1. Load
+    train, val, test = load_data()
     train_dins = set(train["din"].unique())
 
-    # --- Fit both models on train, validate on val (LightGBM uses val for early stopping) ---
-    print("\nFitting logistic regression...")
-    lr = fit_logistic(train, val)
+    # 2. Build feature matrices for each split
+    X_train, y_train = build_features(train)
+    X_val,   y_val   = build_features(val)
+    X_test,  y_test  = build_features(test)
 
-    print("Fitting LightGBM...")
-    gbm = fit_lightgbm(train, val)
-    print(f"LightGBM best iteration: {gbm.best_iteration_}")
+    # 3. Train both baselines
+    models = train_model(X_train, y_train, X_val, y_val)
 
-    # --- Predict on test ---
+    # 4. Score test set + stratified evaluation
     print("\nScoring test set...")
-    lr_scores = predict_proba(lr, test)
-    gbm_scores = predict_proba(gbm, test)
+    scores = {name: predict_proba(m, X_test) for name, m in models.items()}
 
-    # --- Evaluate overall and stratified ---
     strata = build_strata(test, train_dins)
 
     print("\n" + "=" * 80)
     print("STRATIFIED METRICS — TEST SET")
     print("=" * 80)
 
-    lr_strat = evaluate_all_strata(test, lr_scores, strata)
-    lr_strat.insert(0, "model", "logistic")
-    gbm_strat = evaluate_all_strata(test, gbm_scores, strata)
-    gbm_strat.insert(0, "model", "lightgbm")
+    strat_dfs = []
+    for name, s in scores.items():
+        df = evaluate_all_strata(test, s, strata)
+        df.insert(0, "model", name)
+        strat_dfs.append(df)
+        print(f"\n--- {name} ---")
+        print(format_table(df.drop(columns=["model"])))
+    pd.concat(strat_dfs, ignore_index=True).to_csv(
+        OUTPUT_DIR / "stratified_metrics.csv", index=False
+    )
 
-    combined = pd.concat([lr_strat, gbm_strat], ignore_index=True)
-    combined.to_csv(OUTPUT_DIR / "stratified_metrics.csv", index=False)
-
-    print("\n--- Logistic regression ---")
-    print(format_table(lr_strat.drop(columns=["model"])))
-    print("\n--- LightGBM ---")
-    print(format_table(gbm_strat.drop(columns=["model"])))
-
-    # --- Monthly drift within test window ---
+    # 5. Monthly drift within test window
     print("\nComputing monthly drift...")
-    lr_monthly = evaluate_monthly_drift(test, lr_scores)
-    gbm_monthly = evaluate_monthly_drift(test, gbm_scores)
-    lr_monthly.to_csv(OUTPUT_DIR / "monthly_logistic.csv", index=False)
-    gbm_monthly.to_csv(OUTPUT_DIR / "monthly_lightgbm.csv", index=False)
+    monthly = {name: evaluate_monthly_drift(test, s) for name, s in scores.items()}
+    for name, df in monthly.items():
+        df.to_csv(OUTPUT_DIR / f"monthly_{name}.csv", index=False)
 
-    # --- Plots ---
-    print("\nSaving plots...")
-    y_test = test[TARGET].to_numpy()
+    # 6. Plots
+    print("Saving plots...")
     plot_reliability(
-        {"logistic": (y_test, lr_scores), "lightgbm": (y_test, gbm_scores)},
+        {name: (y_test, s) for name, s in scores.items()},
         OUTPUT_DIR / "reliability.png",
     )
-    plot_monthly_pr_auc(
-        {"logistic": lr_monthly, "lightgbm": gbm_monthly},
-        OUTPUT_DIR / "monthly_pr_auc.png",
+    plot_monthly_pr_auc(monthly, OUTPUT_DIR / "monthly_pr_auc.png")
+    plot_feature_importance_lgbm(
+        models["lightgbm"], OUTPUT_DIR / "lightgbm_importance.png"
     )
-    plot_feature_importance_lgbm(gbm, OUTPUT_DIR / "lightgbm_importance.png")
 
-    # --- Headline summary ---
+    # 7. Headline summary — overall metrics via evaluate_model
     print("\n" + "=" * 80)
     print("HEADLINE — overall test metrics")
     print("=" * 80)
-    headline_lr  = lr_strat[lr_strat["stratum"] == "overall"].drop(columns=["stratum"])
-    headline_gbm = gbm_strat[gbm_strat["stratum"] == "overall"].drop(columns=["stratum"])
-    print("\nLogistic:")
-    print(format_table(headline_lr))
-    print("\nLightGBM:")
-    print(format_table(headline_gbm))
+    headline_rows = []
+    for name, m in models.items():
+        row = evaluate_model(m, X_test, y_test)
+        row["model"] = name
+        headline_rows.append(row)
+    headline = pd.DataFrame(headline_rows)
+    cols = ["model", "n", "n_positive", "base_rate",
+            "roc_auc", "pr_auc", "brier"] + [f"precision_at_{k}" for k in TOP_K_VALUES]
+    headline = headline[cols]
+    print(format_table(headline))
 
     print(f"\nArtifacts written to {OUTPUT_DIR.resolve()}")
 

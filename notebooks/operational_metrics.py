@@ -28,7 +28,7 @@ import numpy as np
 import pandas as pd
 
 from data_loader import load_splits, TARGET
-from baseline import fit_lightgbm, fit_logistic, predict_proba
+from baseline import build_features, train_model, predict_proba
 
 
 TOP_K_OPERATIONAL = [10, 25, 50, 100]
@@ -173,11 +173,11 @@ def main() -> None:
           f"{test['observation_date'].nunique()} months")
     print(f"Test positive rate: {test[TARGET].mean():.4f}")
 
-    print("\nFitting LightGBM (from baseline.py)...")
-    gbm = fit_lightgbm(train, val)
-    print(f"LightGBM best iteration: {gbm.best_iteration_}")
-    print("Fitting logistic regression (from baseline.py)...")
-    lr = fit_logistic(train, val)
+    X_train, y_train = build_features(train)
+    X_val,   y_val   = build_features(val)
+    models = train_model(X_train, y_train, X_val, y_val)
+    gbm = models["lightgbm"]
+    lr  = models["logistic"]
 
     # --- Score rankers on test ---
     gbm_scores    = predict_proba(gbm, test)
