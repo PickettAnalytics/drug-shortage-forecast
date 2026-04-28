@@ -1,0 +1,58 @@
+name: CI
+
+on:
+  push:
+    branches: ["main", "public-snapshot"]
+  pull_request:
+
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  lint-test:
+    name: Lint, test, dbt parse (Python ${{ matrix.python-version }})
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        python-version: ["3.11", "3.12"]
+    env:
+      PYTHONPATH: src
+      DBT_PROFILES_DIR: ${{ github.workspace }}/.github/dbt
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: ${{ matrix.python-version }}
+          cache: pip
+          cache-dependency-path: |
+            requirements.txt
+            pyproject.toml
+
+      - name: Install dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install -e ".[dev]"
+
+      - name: Ruff lint
+        run: ruff check src tests
+
+      - name: Pytest
+        run: pytest
+
+      - name: Build demo DuckDB for dbt parse
+        # `dbt parse` reads source freshness checks etc. Without an existing
+        # DuckDB file, dbt-duckdb errors on profile load. The demo builder
+        # writes the same target file the real pipeline uses.
+        run: python -m shortage_forecast.demo --db-path drug_shortages.duckdb --n-dins 30
+
+      - name: dbt deps
+        working-directory: dbt/drug_shortage_dbt
+        run: dbt deps
+
+      - name: dbt parse
+        working-directory: dbt/drug_shortage_dbt
+        run: dbt parse

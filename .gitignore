@@ -6,6 +6,7 @@ __pycache__/
 .ipynb_checkpoints/
 .DS_Store
 baseline_results/
+demo_results/
 warm_cold_results/
 eda_mrt_shortage_panel.ipynb
 notes.py
@@ -19,3 +20,8 @@ notes.py
 **/logs/
 dbt/**/target/
 **/dbt_packages/
+
+# Python build / test artifacts
+*.egg-info/
+.pytest_cache/
+.ruff_cache/

@@ -91,20 +91,33 @@ Feature groups in the panel (49 features in current model):
 drug-shortage-forecast/
 ├── README.md
 ├── LICENSE
-├── requirements.txt
+├── pyproject.toml                # package metadata, ruff + pytest config
+├── requirements.txt              # pinned runtime deps
+├── Makefile                      # `make demo`, `make train`, `make pytest`, ...
 ├── .env.example                  # template for API credentials
+├── .github/
+│   ├── workflows/ci.yml          # ruff + pytest + dbt parse on push/PR
+│   └── dbt/profiles.yml          # CI-only dbt profile
 ├── dbt/drug_shortage_dbt/        # dbt project (models, tests)
 │   └── models/
 │       ├── staging/              # one stg_* view per raw table
 │       ├── intermediate/         # spine, episodes, features
 │       └── marts/                # mrt_shortage_panel (the modeling table)
+├── src/
+│   ├── shortage_forecast/        # modelling package
+│   │   ├── config.py             # paths, splits, feature groups, hyperparams
+│   │   ├── data_loader.py        # train/val/test split loader
+│   │   ├── baseline.py           # logistic + LightGBM trainers
+│   │   ├── operational.py        # per-month Precision@K + heuristic baselines
+│   │   └── demo.py               # synthetic-panel builder for offline runs
+│   └── ingest/                   # raw-source loaders
+│       ├── ingest_hc.py          # Health Canada CSV → DuckDB raw
+│       └── load_fda_shortages.py # openFDA JSON → DuckDB raw
+├── tests/                        # pytest suite (config, metrics, models, demo)
 └── notebooks/
-    ├── data_loader.py            # train/val/test split loader
-    ├── baseline.py               # logistic + LightGBM trainers
-    ├── operational_metrics.py    # per-month Precision@K + heuristic baselines
-    ├── load_fda_shortages.py     # openFDA JSON → DuckDB raw
     ├── data_audit.ipynb          # source-data sanity checks
-    └── error_analysis.ipynb      # per-month error & calibration analysis
+    ├── error_analysis.ipynb      # per-month error & calibration analysis
+    └── model_summary.ipynb       # write-up notebook
 ```
 
 ## Setup
@@ -114,9 +127,14 @@ Requires Python 3.11+ and ~2 GB free disk for the DuckDB file.
 ```bash
 python -m venv .venv
 source .venv/bin/activate          # or .venv\Scripts\activate on Windows
-pip install -r requirements.txt
+pip install -e ".[dev]"            # editable install + pytest/ruff
 cp .env.example .env               # then fill in your credentials
 ```
+
+`pip install -e .` registers the `shortage_forecast` and `ingest`
+packages on the PYTHONPATH. If you'd rather not install, the `Makefile`
+prepends `src/` to `PYTHONPATH` for every Python entry point so the
+targets work either way.
 
 Configure dbt by adding a profile to `~/.dbt/profiles.yml`:
 
@@ -145,18 +163,37 @@ That expands to four steps you can also run individually:
 ```bash
 make ingest      # load raw HC + openFDA into DuckDB raw schema
 make transform   # dbt deps + dbt run (staging -> intermediate -> marts)
-make test        # dbt test
-make train       # python notebooks/baseline.py — writes ./baseline_results/
+make dbt-test    # dbt test
+make train       # baseline trainer — writes ./baseline_results/
 ```
 
 For a heuristic-vs-model comparison with per-month Precision@K:
 
 ```bash
-python notebooks/operational_metrics.py
+make operational
 ```
 
 If you don't have GNU `make` on your platform (common on Windows without
-WSL), each target maps to a one-liner you can copy out of the `Makefile`.
+WSL), each target maps to a one-liner you can copy out of the `Makefile`,
+or invoke the modules directly:
+
+```bash
+python -m shortage_forecast.baseline      # train + write metrics
+python -m shortage_forecast.operational   # per-month operational metrics
+python -m ingest.ingest_hc                # ingest Health Canada CSVs
+```
+
+### Tests, lint, CI
+
+```bash
+make pytest      # Python unit tests (no DuckDB needed; demo built on the fly)
+make lint        # ruff check on src/ and tests/
+make dbt-test    # dbt schema tests (requires populated DuckDB)
+```
+
+The same three checks run on every push and pull request — see
+`.github/workflows/ci.yml`. CI builds a small synthetic DuckDB before
+running `dbt parse` so it can validate the project without real data.
 
 ## Reproducibility & Data Access
 
@@ -192,17 +229,32 @@ declarations live in `dbt/drug_shortage_dbt/models/staging/_sources.yml`.
 
 Even with empty `data/raw/`, you can:
 
-- Read the dbt project — model SQL, schema tests, and the panel definition
-  are all checked in under `dbt/drug_shortage_dbt/`. `dbt parse` and
-  `dbt compile` run without the database populated.
-- Read the modelling code — `notebooks/baseline.py`,
-  `notebooks/data_loader.py`, and `notebooks/operational_metrics.py` are
-  self-contained Python.
-- Inspect the EDA / model summary notebooks; their saved cell outputs
+- **Run the full modelling pipeline against a synthetic panel**:
+  ```bash
+  make demo-train         # build synthetic DuckDB, train baseline against it
+  make demo-operational   # run heuristic + blend comparison on the synthetic DB
+  ```
+  These targets call `python -m shortage_forecast.demo` to generate
+  `drug_shortages_demo.duckdb` (one synthetic row per DIN per month, with
+  every feature column populated), then point the trainer at it via the
+  `DRUG_SHORTAGE_DB` environment variable. Numbers are not interpretable —
+  the data is random — but the full code path runs end-to-end so you can
+  inspect the metrics tables and the artefacts under `demo_results/`.
+- **Run the test suite**:
+  ```bash
+  make pytest
+  ```
+  The fixtures build their own synthetic DuckDB; no raw data needed.
+- **Read the dbt project** — model SQL, schema tests, and the panel
+  definition are all checked in under `dbt/drug_shortage_dbt/`. `dbt parse`
+  and `dbt compile` run without the database populated.
+- **Read the modelling code** under `src/shortage_forecast/`.
+- **Inspect the EDA / model summary notebooks**; their saved cell outputs
   include the headline tables and figures.
 
-`make transform`, `make test`, and `make train` all require a populated
-DuckDB file at `drug_shortages.duckdb`.
+`make transform`, `make dbt-test`, and `make train` all require a
+populated DuckDB file at `drug_shortages.duckdb`. `make demo-train` and
+`make pytest` do not.
 
 ### Plugging in your own data
 
@@ -213,8 +265,8 @@ this project by:
 1. Replacing the staging models in `dbt/drug_shortage_dbt/models/staging/`
    so they point at your sources, while keeping the column names the
    intermediate models consume.
-2. Updating `SplitConfig` in `notebooks/data_loader.py` so the train /
-   val / test windows match your data range.
+2. Updating `SplitConfig` in `src/shortage_forecast/config.py` so the
+   train / val / test windows match your data range.
 3. Running `make full_pipeline`.
 
 ## Notes on the model

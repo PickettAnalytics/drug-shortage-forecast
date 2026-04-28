@@ -1,0 +1,12 @@
+# dbt profile used only by CI. Mirrors the structure of a local profile but
+# points at a relative DuckDB path so dbt can parse without a real database.
+# Real users add their own profile to ~/.dbt/profiles.yml — see README.
+
+drug_shortage_dbt:
+  target: dev
+  outputs:
+    dev:
+      type: duckdb
+      path: ../../drug_shortages.duckdb
+      schema: main
+      threads: 2
