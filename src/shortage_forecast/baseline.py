@@ -110,8 +110,9 @@ def build_features(df: pd.DataFrame) -> tuple[pd.DataFrame, np.ndarray]:
 def precision_at_k(y_true: np.ndarray, y_score: np.ndarray, k: int) -> float:
     """Fraction of positives among the top-k predicted scores.
 
-    If k >= len(y), returns base rate. If fewer than k items exist
-    (stratified subset too small), returns NaN.
+    Returns NaN when fewer than k items exist (stratified subset too
+    small) — precision@k is undefined when you cannot draw k items.
+    When k == len(y), this collapses to the base rate by construction.
     """
     n = len(y_true)
     if n < k:

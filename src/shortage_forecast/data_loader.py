@@ -97,6 +97,8 @@ def load_splits(
 ) -> tuple[pd.DataFrame, pd.DataFrame, pd.DataFrame]:
     db_path = Path(db_path) if db_path is not None else get_db_path()
 
+    if verbose:
+        print(f"Reading {PANEL_TABLE} from {db_path}")
     raw = _load_raw(db_path)
     typed = _coerce_dtypes(raw)
     eligible = _apply_exclusion(typed)

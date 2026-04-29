@@ -75,7 +75,7 @@ for the full source declaration.
                       └────────────────────┘
 ```
 
-Feature groups in the panel (49 features in current model):
+Feature groups in the panel (34 features in current model):
 
 1. **Drug intrinsic** — age, ingredient count, ATC class, schedule
 2. **Own-DIN shortage history** — counts, recency, longest prior episode
