@@ -222,7 +222,7 @@ The dbt mart `mrt_shortage_panel` is the canonical modelling table — one
 row per `(observation_date, din)` for monthly observation dates from
 2018-01 to the most recent month with a complete 90-day forward label.
 Each row carries the binary `shortage_started_within_90d` target and the
-~50 features documented under "Feature groups" above. Source column-level
+34 features documented under "Feature groups" above. Source column-level
 declarations live in `dbt/drug_shortage_dbt/models/staging/_sources.yml`.
 
 ### What can be run without raw data
