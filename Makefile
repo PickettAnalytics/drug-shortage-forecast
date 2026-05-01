@@ -1,7 +1,7 @@
 # Drug Shortage Forecast — pipeline entrypoints.
 #
 # Standard targets:
-#   make ingest         Load raw sources into DuckDB (Health Canada + openFDA)
+#   make ingest         Load raw sources into DuckDB (HC + DPD + CIHI + openFDA)
 #   make transform      Run dbt models (staging -> intermediate -> marts)
 #   make dbt-test       Run dbt tests
 #   make train          Train baseline models, write metrics to ./baseline_results/
@@ -52,6 +52,8 @@ help:
 
 ingest:
 	$(RUN_PY) -m ingest.ingest_hc
+	$(RUN_PY) -m ingest.ingest_dpd
+	$(RUN_PY) -m ingest.ingest_cihi
 	$(RUN_PY) -m ingest.load_fda_shortages
 
 transform:

@@ -112,6 +112,8 @@ drug-shortage-forecast/
 │   │   └── demo.py               # synthetic-panel builder for offline runs
 │   └── ingest/                   # raw-source loaders
 │       ├── ingest_hc.py          # Health Canada CSV → DuckDB raw
+│       ├── ingest_dpd.py         # DPD allfile zips → DuckDB raw (8 tables)
+│       ├── ingest_cihi.py        # CIHI formulary xlsx → DuckDB raw
 │       └── load_fda_shortages.py # openFDA JSON → DuckDB raw
 ├── tests/                        # pytest suite (config, metrics, models, demo)
 └── notebooks/
@@ -161,7 +163,7 @@ make full_pipeline
 That expands to four steps you can also run individually:
 
 ```bash
-make ingest      # load raw HC + openFDA into DuckDB raw schema
+make ingest      # load raw HC + DPD + CIHI + openFDA into DuckDB raw schema
 make transform   # dbt deps + dbt run (staging -> intermediate -> marts)
 make dbt-test    # dbt test
 make train       # baseline trainer — writes ./baseline_results/
@@ -181,6 +183,9 @@ or invoke the modules directly:
 python -m shortage_forecast.baseline      # train + write metrics
 python -m shortage_forecast.operational   # per-month operational metrics
 python -m ingest.ingest_hc                # ingest Health Canada CSVs
+python -m ingest.ingest_dpd               # ingest DPD allfile zips
+python -m ingest.ingest_cihi              # ingest CIHI formulary xlsx
+python -m ingest.load_fda_shortages       # ingest openFDA JSON
 ```
 
 ### Tests, lint, CI

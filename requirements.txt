@@ -1,5 +1,6 @@
 requests
 pandas
+openpyxl
 python-dotenv
 # DuckDB 1.5.x has an INTERNAL Error regression with complex CTE queries
 # (see duckdb/duckdb#21604). Pin to 1.3/1.4 until fixed.

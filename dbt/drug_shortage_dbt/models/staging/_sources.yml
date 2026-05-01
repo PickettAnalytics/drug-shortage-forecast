@@ -35,7 +35,7 @@ sources:
         description: >
           CIHI Formulary Coverage Data Tool (Table 1). One row per
           (jurisdiction × drug_program × DIN × coverage_period).
-          Loaded via src03_ingest_cihi_formulary.py from the CIHI Excel export.
+          Loaded via `python -m ingest.ingest_cihi` from the CIHI Excel export.
           DINs are zero-padded to 8 characters during ingest.
 
       # openFDA drug shortages
