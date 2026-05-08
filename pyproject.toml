@@ -20,7 +20,8 @@ dependencies = [
     "pyarrow",
     "matplotlib",
     "scikit-learn",
-    "lightgbm",
+    "catboost",
+    "lightgbm",  # still used by experiments/gbm_comparison.py
 ]
 
 [project.optional-dependencies]

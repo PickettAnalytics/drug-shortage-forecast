@@ -4,7 +4,7 @@ baselines for honest portfolio comparison.
 
 Extends the per-month Precision@K analysis to compare four rankers:
 
-  1. LightGBM — the full feature-set model from baseline.py
+  1. CatBoost — the full feature-set model from baseline.py
   2. Logistic — the simple linear baseline from baseline.py
   3. Heuristic_1 — rank by shortages_prior_12m alone (crude "how many
      shortages has this drug had recently?" rule of thumb)
@@ -178,7 +178,7 @@ def main() -> None:
     X_train, y_train = build_features(train)
     X_val,   y_val   = build_features(val)
     models = train_model(X_train, y_train, X_val, y_val)
-    gbm = models["lightgbm"]
+    gbm = models["catboost"]
     lr  = models["logistic"]
 
     gbm_scores    = predict_proba(gbm, test)
@@ -187,7 +187,7 @@ def main() -> None:
     heur_2_scores = score_heuristic_compound(test)
     blend_scores  = score_blended(test, gbm_scores, heur_1_scores)
 
-    monthly_gbm   = per_month_metrics(test, gbm_scores,    "lightgbm")
+    monthly_gbm   = per_month_metrics(test, gbm_scores,    "catboost")
     monthly_lr    = per_month_metrics(test, lr_scores,     "logistic")
     monthly_h1    = per_month_metrics(test, heur_1_scores, "heuristic_single")
     monthly_h2    = per_month_metrics(test, heur_2_scores, "heuristic_compound")
@@ -225,7 +225,7 @@ def main() -> None:
     summary_h2    = summarize(monthly_h2,    mean_base)
     summary_blend = summarize(monthly_blend, mean_base)
 
-    print_summary_table(summary_gbm,   "LightGBM (monotone-constrained)")
+    print_summary_table(summary_gbm,   "CatBoost (monotone-constrained)")
     print_summary_table(summary_lr,    "Logistic regression (baseline.py)")
     print_summary_table(summary_h1,    "Heuristic 1: shortages_prior_12m only")
     print_summary_table(summary_h2,    "Heuristic 2: shortages_prior_12m + mfr_rate tiebreak")

@@ -4,7 +4,7 @@ Baseline models for drug shortage prediction.
 Trains two models side-by-side on the same splits from `data_loader`:
 
   1. Logistic regression — simple, calibrated, interpretable floor.
-  2. LightGBM — near-SOTA tabular, the number any complex model must beat.
+  2. CatBoost — near-SOTA tabular, the number any complex model must beat.
 
 Evaluates both with the metric hierarchy for use case (a) — early-warning
 ranking system:
@@ -38,10 +38,10 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Iterable
 
-import lightgbm as lgb
 import matplotlib.pyplot as plt
 import numpy as np
 import pandas as pd
+from catboost import CatBoostClassifier, Pool
 from sklearn.calibration import calibration_curve
 from sklearn.compose import ColumnTransformer
 from sklearn.impute import SimpleImputer
@@ -56,12 +56,12 @@ from sklearn.preprocessing import OneHotEncoder, StandardScaler
 
 from shortage_forecast.config import (
     BOOLEAN_FEATURES,
+    CATBOOST_PARAMS,
     CATEGORICAL_FEATURES,
     CATEGORICAL_FEATURES_HIGH_CARD,
     CATEGORICAL_FEATURES_LOW_CARD,
+    EARLY_STOPPING_ROUNDS,
     FEATURES,
-    LIGHTGBM_EARLY_STOPPING_ROUNDS,
-    LIGHTGBM_PARAMS,
     LOGISTIC_PARAMS,
     MONOTONE_DECREASING_FEATURES,
     MONOTONE_INCREASING_FEATURES,
@@ -203,19 +203,37 @@ def build_logistic_pipeline() -> Pipeline:
     ])
 
 
-def build_lightgbm_model() -> lgb.LGBMClassifier:
-    """LightGBM binary classifier with monotone constraints on shortage signals.
+def _catboost_monotone_dict() -> dict[str, int]:
+    """CatBoost accepts monotone constraints as a {feature_name: ±1} dict.
+
+    Only non-zero entries are passed; zero would be a silent no-op anyway,
+    and the dict form keeps the feature-to-direction mapping explicit.
+    """
+    return {
+        f: c
+        for f, c in zip(FEATURES, monotone_constraints(FEATURES), strict=True)
+        if c != 0
+    }
+
+
+def build_catboost_model() -> CatBoostClassifier:
+    """CatBoost binary classifier with monotone constraints on shortage signals.
 
     Constraints (see `MONOTONE_INCREASING_FEATURES` / `MONOTONE_DECREASING_FEATURES`
     in config) pin the gradient direction on the features the heuristic relies on;
     the GBM is free to learn anything it likes off the remaining features.
+
+    Hyperparameters come from `CATBOOST_PARAMS` (see `config.py` for the
+    Optuna provenance — multi-objective P@10 + P@25).
     """
-    return lgb.LGBMClassifier(
-        monotone_constraints=monotone_constraints(FEATURES),
-        monotone_constraints_method="basic",
-        random_state=RANDOM_STATE,
-        verbose=-1,
-        **LIGHTGBM_PARAMS,
+    return CatBoostClassifier(
+        monotone_constraints=_catboost_monotone_dict(),
+        eval_metric="PRAUC",
+        random_seed=RANDOM_STATE,
+        early_stopping_rounds=EARLY_STOPPING_ROUNDS,
+        verbose=False,
+        allow_writing_files=False,
+        **CATBOOST_PARAMS,
     )
 
 
@@ -230,25 +248,43 @@ def fit_logistic(X_train: pd.DataFrame, y_train: np.ndarray) -> Pipeline:
     return pipe
 
 
-def fit_lightgbm(
+def _prepare_for_catboost(X: pd.DataFrame) -> pd.DataFrame:
+    """CatBoost rejects pandas Category dtype on string-valued cats.
+
+    Converts categorical columns to plain strings with a sentinel for
+    missing values. Numeric columns are left untouched (CatBoost handles
+    NaN natively in numeric features).
+    """
+    X = X.copy()
+    for col in CATEGORICAL_FEATURES:
+        if col in X.columns:
+            X[col] = (
+                X[col].astype("object").where(X[col].notna(), "__missing__").astype(str)
+            )
+    return X
+
+
+def fit_catboost(
     X_train: pd.DataFrame,
     y_train: np.ndarray,
     X_val: pd.DataFrame | None = None,
     y_val: np.ndarray | None = None,
-) -> lgb.LGBMClassifier:
-    """Fit LightGBM. `(X_val, y_val)` enables early stopping on PR-AUC."""
-    model = build_lightgbm_model()
-    fit_kwargs: dict = dict(
-        eval_metric="average_precision",
-        callbacks=[lgb.early_stopping(
-            stopping_rounds=LIGHTGBM_EARLY_STOPPING_ROUNDS,
-            verbose=False,
-        )],
-        categorical_feature=CATEGORICAL_FEATURES,
+) -> CatBoostClassifier:
+    """Fit CatBoost. `(X_val, y_val)` enables early stopping on PR-AUC."""
+    model = build_catboost_model()
+    train_pool = Pool(
+        _prepare_for_catboost(X_train),
+        label=y_train,
+        cat_features=CATEGORICAL_FEATURES,
     )
+    eval_set = None
     if X_val is not None and y_val is not None:
-        fit_kwargs["eval_set"] = [(X_val, y_val)]
-    model.fit(X_train, y_train, **fit_kwargs)
+        eval_set = Pool(
+            _prepare_for_catboost(X_val),
+            label=y_val,
+            cat_features=CATEGORICAL_FEATURES,
+        )
+    model.fit(train_pool, eval_set=eval_set)
     return model
 
 
@@ -260,7 +296,7 @@ def train_model(
 ) -> dict:
     """Train both baselines side-by-side and return them in a dict.
 
-    LightGBM uses `(X_val, y_val)` for early stopping when supplied;
+    CatBoost uses `(X_val, y_val)` for early stopping when supplied;
     logistic regression has no early stopping and ignores it.
     """
     n_features = X_train.shape[1]
@@ -274,22 +310,30 @@ def train_model(
     print("  Fitting logistic regression...")
     lr = fit_logistic(X_train, y_train)
 
-    print("  Fitting LightGBM...")
-    gbm = fit_lightgbm(X_train, y_train, X_val, y_val)
-    print(f"  LightGBM best iteration: {gbm.best_iteration_}")
+    print("  Fitting CatBoost...")
+    gbm = fit_catboost(X_train, y_train, X_val, y_val)
+    print(f"  CatBoost best iteration: {gbm.get_best_iteration()}")
 
     elapsed = time.perf_counter() - t0
     print(f"Training complete in {elapsed:.1f}s.")
-    return {"logistic": lr, "lightgbm": gbm}
+    return {"logistic": lr, "catboost": gbm}
 
 
 def predict_proba(model, X: pd.DataFrame) -> np.ndarray:
-    """Positive-class probability for either model type."""
-    X = X.copy()
-    # LightGBM needs category dtype; sklearn pipeline doesn't care
-    for col in CATEGORICAL_FEATURES:
-        if col in X.columns:
-            X[col] = X[col].astype("category")
+    """Positive-class probability for either model type.
+
+    CatBoost rejects pandas Category dtype on string-valued cats and
+    requires NaN in cats to be filled with a sentinel; the sklearn pipeline
+    accepts both. Dispatch on the model class so each gets the dtype it
+    expects.
+    """
+    if isinstance(model, CatBoostClassifier):
+        X = _prepare_for_catboost(X)
+    else:
+        X = X.copy()
+        for col in CATEGORICAL_FEATURES:
+            if col in X.columns:
+                X[col] = X[col].astype("category")
     return model.predict_proba(X[FEATURES])[:, 1]
 
 
@@ -433,21 +477,21 @@ def plot_monthly_pr_auc(
     plt.close()
 
 
-def plot_feature_importance_lgbm(
-    model: lgb.LGBMClassifier,
+def plot_feature_importance_catboost(
+    model: CatBoostClassifier,
     out_path: Path,
     top_n: int = 20,
 ) -> None:
-    """Gain-based importance. SHAP would be better but is slower; save for later."""
+    """PredictionValuesChange importance. SHAP would be better but is slower."""
     importances = pd.DataFrame({
-        "feature": model.feature_name_,
-        "gain": model.booster_.feature_importance(importance_type="gain"),
-    }).sort_values("gain", ascending=True).tail(top_n)
+        "feature": model.feature_names_,
+        "importance": model.get_feature_importance(),
+    }).sort_values("importance", ascending=True).tail(top_n)
 
     fig, ax = plt.subplots(figsize=(8, max(4, 0.3 * len(importances))))
-    ax.barh(importances["feature"], importances["gain"])
-    ax.set_xlabel("Total gain")
-    ax.set_title(f"LightGBM feature importance (top {top_n})")
+    ax.barh(importances["feature"], importances["importance"])
+    ax.set_xlabel("Prediction-values-change importance")
+    ax.set_title(f"CatBoost feature importance (top {top_n})")
     plt.tight_layout()
     plt.savefig(out_path, dpi=120)
     plt.close()
@@ -529,8 +573,8 @@ def main() -> None:
         output_dir / "reliability.png",
     )
     plot_monthly_pr_auc(monthly, output_dir / "monthly_pr_auc.png")
-    plot_feature_importance_lgbm(
-        models["lightgbm"], output_dir / "lightgbm_importance.png"
+    plot_feature_importance_catboost(
+        models["catboost"], output_dir / "catboost_importance.png"
     )
 
     # 7. Headline summary — overall metrics via evaluate_model
@@ -551,25 +595,23 @@ def main() -> None:
     print(f"\nArtifacts written to {output_dir.resolve()}")
 
 
-# Backwards-compatible re-exports — older notebooks import these names from
-# `baseline` directly.
 __all__ = [
     "MONOTONE_INCREASING_FEATURES",
     "MONOTONE_DECREASING_FEATURES",
+    "build_catboost_model",
     "build_features",
     "build_logistic_pipeline",
-    "build_lightgbm_model",
     "build_strata",
     "compute_metrics",
     "evaluate_all_strata",
     "evaluate_model",
     "evaluate_monthly_drift",
-    "fit_lightgbm",
+    "fit_catboost",
     "fit_logistic",
     "format_table",
     "load_data",
     "main",
-    "plot_feature_importance_lgbm",
+    "plot_feature_importance_catboost",
     "plot_monthly_pr_auc",
     "plot_reliability",
     "precision_at_k",

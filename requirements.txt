@@ -10,4 +10,5 @@ jupyterlab
 pyarrow
 matplotlib
 scikit-learn
+catboost
 lightgbm

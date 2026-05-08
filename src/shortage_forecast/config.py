@@ -95,13 +95,38 @@ RANDOM_TIEBREAK_SEED = 42
 TOP_K_VALUES = [10, 25, 100, 500, 1000]
 TOP_K_OPERATIONAL = [10, 25, 50, 100]
 
-LIGHTGBM_PARAMS = dict(
-    n_estimators=2000,
-    learning_rate=0.02,
-    num_leaves=25,
-    min_child_samples=150,
+# CatBoost hyperparameters — selected from a multi-objective Optuna study
+# (`gbm_pk_tuning`) that optimised val per-month blend P@10 + P@25 directly,
+# rather than pooled val PR-AUC. The balanced (max-sum) Pareto point on the
+# 2024-04..2024-12 val window beats the previous LightGBM production at every
+# operational K and on PR-AUC. See `experiments_results_pk/summary.md`.
+# Values are the exact Optuna outputs from `experiments_results_pk/best_params.json`;
+# rounding them caused a measurable per-month P@10 drift on the test set.
+CATBOOST_PARAMS = dict(
+    iterations=2000,
+    learning_rate=0.08718837518272327,
+    depth=8,
+    l2_leaf_reg=15.173802128614698,
+    random_strength=0.03024369161272648,
+    bagging_temperature=0.07728308264433714,
+    border_count=122,
 )
-LIGHTGBM_EARLY_STOPPING_ROUNDS = 100
+
+# Alternative CatBoost hyperparameters tuned for pooled val PR-AUC instead of
+# per-month P@K. Trades P@10 (0.530) for higher P@25 (0.436). Swap into
+# CATBOOST_PARAMS if the operational priority shifts to deeper monitoring
+# lists. Source: `experiments_results/best_params.json`.
+CATBOOST_PARAMS_PR_AUC = dict(
+    iterations=2000,
+    learning_rate=0.02823663521722853,
+    depth=8,
+    l2_leaf_reg=5.040998330714447,
+    random_strength=0.25152823846957467,
+    bagging_temperature=0.6129578000958535,
+    border_count=41,
+)
+
+EARLY_STOPPING_ROUNDS = 100
 
 LOGISTIC_PARAMS = dict(
     solver="liblinear",
@@ -212,11 +237,12 @@ MONOTONE_DECREASING_FEATURES = {
 
 
 def monotone_constraints(feature_cols: list[str]) -> list[int]:
-    """LightGBM monotone-constraint vector aligned with `feature_cols`.
+    """Monotone-constraint vector aligned with `feature_cols`.
 
     +1 for features in MONOTONE_INCREASING_FEATURES, -1 for decreasing,
     0 otherwise. Order matters: the returned list lines up with the column
-    order of the training matrix.
+    order of the training matrix. CatBoost / LightGBM / XGBoost all accept
+    this list-of-ints format.
     """
     out: list[int] = []
     for f in feature_cols:

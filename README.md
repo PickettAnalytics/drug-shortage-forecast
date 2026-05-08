@@ -4,7 +4,7 @@ A 90-day shortage prediction model for prescription drugs sold in Canada,
 built on Health Canada, openFDA, and CIHI public datasets.
 
 The pipeline ingests four public sources, lands them in DuckDB, models a
-star-schema panel with dbt, and trains a LightGBM ranker that scores every
+star-schema panel with dbt, and trains a CatBoost ranker that scores every
 drug × month for "will this drug enter shortage in the next 90 days?"
 
 This is a portfolio project. It is not affiliated with Health Canada, the
@@ -14,18 +14,20 @@ FDA, or CIHI, and is not intended for clinical or operational use.
 
 Per-month mean Precision@K on a 10-month hold-out (2025-04 .. 2026-01):
 
-| K   | LightGBM + heuristic blend | Heuristic baseline | Lift  |
+| K   | CatBoost + heuristic blend | Heuristic baseline | Lift  |
 |----:|---------------------------:|-------------------:|------:|
-|  10 |                      0.560 |              0.452 | +24%  |
-|  25 |                      0.412 |              0.319 | +29%  |
-|  50 |                      0.338 |              0.276 | +22%  |
-| 100 |                      0.274 |              0.235 | +17%  |
+|  10 |                      0.580 |              0.390 | +49%  |
+|  25 |                      0.412 |              0.368 | +12%  |
+|  50 |                      0.340 |              0.284 | +20%  |
+| 100 |                      0.296 |              0.234 | +27%  |
 
 The base rate of a shortage starting within 90 days for any given drug-month
 is roughly 3%. The blended ranker is a within-month rank combination of a
-monotone-constrained LightGBM and a `shortages_prior_12m` heuristic — the
+monotone-constrained CatBoost and a `shortages_prior_12m` heuristic — the
 two errors are uncorrelated enough that the blend Pareto-dominates either
-alone at every K we care about.
+alone at every K we care about. CatBoost replaced LightGBM as the production
+ranker after a multi-objective Optuna study (`experiments_results_pk/`)
+found it Pareto-dominant on every operational K and on PR-AUC.
 
 See `notebooks/error_analysis.ipynb` for the per-month breakdown and
 `notebooks/data_audit.ipynb` for source-data sanity checks.
@@ -71,7 +73,7 @@ for the full source declaration.
                                 │
                                 ▼
                       ┌────────────────────┐
-                      │  LightGBM + blend   │  baseline.py + operational_metrics.py
+                      │  CatBoost + blend   │  baseline.py + operational_metrics.py
                       └────────────────────┘
 ```
 
@@ -107,7 +109,7 @@ drug-shortage-forecast/
 │   ├── shortage_forecast/        # modelling package
 │   │   ├── config.py             # paths, splits, feature groups, hyperparams
 │   │   ├── data_loader.py        # train/val/test split loader
-│   │   ├── baseline.py           # logistic + LightGBM trainers
+│   │   ├── baseline.py           # logistic + CatBoost trainers
 │   │   ├── operational.py        # per-month Precision@K + heuristic baselines
 │   │   └── demo.py               # synthetic-panel builder for offline runs
 │   └── ingest/                   # raw-source loaders
@@ -281,10 +283,12 @@ this project by:
   metric that matches the actual workflow. We report it alongside PR-AUC
   and ROC-AUC for completeness.
 
-- **Why monotone constraints?** Without them, LightGBM learned interaction
+- **Why monotone constraints?** Without them, the GBM learned interaction
   shapes that down-ranked drugs whose shortage history alone would have
   put them at the top. Pinning the gradient direction on the most reliable
-  shortage signals improved this.
+  shortage signals improved this. The constraints are model-agnostic
+  (CatBoost, LightGBM, and XGBoost all accept the same per-feature ±1
+  vector) so the wiring survived the model swap unchanged.
 
 - **Why blend with a heuristic?** Log-loss is calibrated across the panel,
   not within month, so the GBM's top-K picks were weak in quiet months
