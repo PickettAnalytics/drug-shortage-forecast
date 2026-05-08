@@ -6,6 +6,7 @@
 #   make dbt-test       Run dbt tests
 #   make train          Train baseline models, write metrics to ./baseline_results/
 #   make operational    Run per-month operational metrics (model + heuristics)
+#   make dashboard      Per-month top-25 prediction dashboard (markdown for GitHub)
 #   make full_pipeline  ingest -> transform -> dbt-test -> train, end to end
 #
 # Demo / dev targets (no real raw data required):
@@ -29,7 +30,7 @@ RUN_PY := PYTHONPATH=src $(PYTHON)
 
 DEMO_DB := drug_shortages_demo.duckdb
 
-.PHONY: help ingest transform dbt-test train operational full_pipeline \
+.PHONY: help ingest transform dbt-test train operational dashboard full_pipeline \
         demo demo-train demo-operational lint pytest test
 
 help:
@@ -39,6 +40,7 @@ help:
 	@echo "  dbt-test           Run dbt tests"
 	@echo "  train              Train baseline models and write metrics"
 	@echo "  operational        Per-month operational metrics + heuristic baselines"
+	@echo "  dashboard          Per-month top-25 markdown dashboard at ./dashboard/"
 	@echo "  full_pipeline      ingest -> transform -> dbt-test -> train"
 	@echo ""
 	@echo "Demo / dev (no raw data required):"
@@ -67,6 +69,9 @@ train:
 
 operational:
 	$(RUN_PY) -m shortage_forecast.operational
+
+dashboard:
+	$(RUN_PY) -m shortage_forecast.dashboard
 
 full_pipeline: ingest transform dbt-test train
 
